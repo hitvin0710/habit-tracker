@@ -140,8 +140,7 @@ if not logs_df.empty and "Date" in logs_df.columns:
 st.sidebar.title("Navigation")
 navigation_selection = st.sidebar.radio(
     "Select View",
-    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "ML Written Cue Analysis", "ML Weekly Report",
-     "Journal Archive"]
+    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "Written Cue Analysis", "Weekly Report", "Journal Archive"]
 )
 
 st.sidebar.divider()
@@ -198,19 +197,24 @@ if navigation_selection == "Daily Tracking & Check-In":
             )
 
     with col2:
-        st.subheader("Daily Context (ML Inputs)")
+        st.subheader("Daily Context & Nutrition (Inputs)")
         cue_category = st.selectbox("Trigger Category:",
                                     ["Morning Routine", "After Class", "After Dinner", "Random Time"],
                                     disabled=already_logged_today)
         split = st.selectbox("Routine Split:", ["Push", "Pull", "Legs", "Rest"], disabled=already_logged_today)
+
+        # Sliders / Soundbar style inputs for health and nutrition metrics
         sleep = st.slider("Sleep Hours:", 4.0, 10.0, 7.0, 0.5, disabled=already_logged_today)
-        energy = st.slider("Energy (1-10):", 1, 10, 7, disabled=already_logged_today)
-        stress = st.slider("Stress (1-10):", 1, 10, 4, disabled=already_logged_today)
+        stress = st.slider("Stress Level (1-10):", 1, 10, 4, disabled=already_logged_today)
+        water_intake = st.slider("Water Intake (Liters):", 0.5, 6.0, 3.0, 0.1, disabled=already_logged_today)
+        calorie_intake = st.slider("Calorie Intake (kcal):", 1200, 4500, 2500, 50, disabled=already_logged_today)
+        protein_intake = st.slider("Protein Intake (grams):", 30, 250, 120, 5, disabled=already_logged_today)
+        omega3_intake = st.slider("Omega-3 Intake (grams):", 0.0, 5.0, 1.0, 0.1, disabled=already_logged_today)
 
     st.divider()
-    st.subheader("What led to the habit today?")
+    st.subheader("What led to the habit breaking or making today?")
     written_cue = st.text_input(
-        "Describe what happened right before your habit or urge:",
+        "Describe what happened right before your habit or urge (cues analysis):",
         placeholder="Write your specific trigger context...",
         disabled=already_logged_today
     )
@@ -258,8 +262,11 @@ if navigation_selection == "Daily Tracking & Check-In":
                 "Written_Cue": written_cue,
                 "Routine_Split": split,
                 "Sleep_Hours": sleep,
-                "Energy": energy,
                 "Stress": stress,
+                "Water_Intake": water_intake,
+                "Calorie_Intake": calorie_intake,
+                "Protein_Intake": protein_intake,
+                "Omega3_Intake": omega3_intake,
                 "Streak": 1,
                 "Completed": int(good_habit_done),
                 "Relapsed": int(relapsed),
@@ -346,24 +353,27 @@ elif navigation_selection == "Monthly Goals & Timers":
                     st.rerun()
             st.divider()
 
-elif navigation_selection == "ML Written Cue Analysis":
-    st.title("Machine Learning Written Cue Analysis")
+elif navigation_selection == "Written Cue Analysis":
+    st.title("Written Cue & Health Factor Analysis")
     st.caption(
-        "Analyzing your written triggers and descriptions to find underlying patterns behind your successful habit completions vs. relapses.")
+        "Analyzing your written triggers, sleep, stress, water, calories, protein, and omega-3 intakes to uncover cues behind breaking or making habits.")
 
     if logs_df.empty or "Written_Cue" not in logs_df.columns:
         st.info(
-            "Log a few days of data with written trigger descriptions in Daily Tracking to unlock ML Written Cue Analysis!")
+            "Log a few days of data with health factors and written trigger descriptions in Daily Tracking to unlock analysis!")
     else:
-        st.subheader("Your Written Trigger Logs & Outcomes")
-        display_df = logs_df[["Date", "Written_Cue", "Completed", "Relapsed"]].copy()
-        display_df["Status"] = display_df.apply(
-            lambda r: "Success" if r["Completed"] == 1 else ("Relapsed" if r["Relapsed"] == 1 else "Neutral"), axis=1)
-        st.dataframe(display_df[["Date", "Written_Cue", "Status"]], use_container_width=True, hide_index=True)
+        st.subheader("Your Written Trigger Logs & Health Factors")
+        display_cols = [c for c in ["Date", "Written_Cue", "Sleep_Hours", "Stress", "Water_Intake", "Calorie_Intake",
+                                    "Protein_Intake", "Omega3_Intake", "Completed", "Relapsed"] if c in logs_df.columns]
+        display_df = logs_df[display_cols].copy()
+        display_df["Status"] = display_df.apply(lambda r: "Success" if r.get("Completed", 0) == 1 else (
+            "Relapsed" if r.get("Relapsed", 0) == 1 else "Neutral"), axis=1)
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("Random Forest Feature Importance")
-        st.caption("Shows which contextual factors carry the most predictive weight in your ML model.")
+        st.subheader("Feature Importance Analysis")
+        st.caption(
+            "Shows which health, nutrition, and trigger inputs carry the most predictive weight in your tracking model.")
 
         try:
             rf_model = model.named_steps["rf"]
@@ -377,10 +387,10 @@ elif navigation_selection == "ML Written Cue Analysis":
 
             st.bar_chart(feat_df.set_index("Feature"))
         except Exception as e:
-            st.info("Complete a few more logs to generate the ML feature weights chart.")
+            st.info("Complete a few more logs to generate the feature weights chart.")
 
-elif navigation_selection == "ML Weekly Report":
-    st.title("ML Weekly Progress Report")
+elif navigation_selection == "Weekly Report":
+    st.title("Weekly Progress Report")
     if logs_df.empty or "Relapsed" not in logs_df.columns:
         st.info("Log a few days of data in Daily Tracking to generate your weekly report!")
     else:
@@ -401,5 +411,7 @@ elif navigation_selection == "Journal Archive":
         for idx, row in logs_df.iterrows():
             with st.expander(f"Entry on {row.get('Date', 'Unknown Date')} — Relapsed: {row.get('Relapsed', 0)}"):
                 st.write(f"**Written Trigger Context:** {row.get('Written_Cue', 'None provided.')}")
+                st.write(
+                    f"**Health Log:** Sleep: {row.get('Sleep_Hours', 'N/A')}h | Stress: {row.get('Stress', 'N/A')}/10 | Water: {row.get('Water_Intake', 'N/A')}L | Calories: {row.get('Calorie_Intake', 'N/A')}kcal | Protein: {row.get('Protein_Intake', 'N/A')}g | Omega-3: {row.get('Omega3_Intake', 'N/A')}g")
                 st.write(f"**Journal Note:** {row.get('Journal', 'No notes provided.')}")
                 st.write(f"*Alternate Habit Used:* {row.get('Alternate_Habit', 'None')}")
