@@ -130,13 +130,32 @@ def calculate_habit_coins(df, bonuses):
 
 total_coins = calculate_habit_coins(logs_df, bonus_log)
 
+
+# --- RANKED LEVEL SYSTEM ---
+def get_user_rank(coins):
+    if coins >= 1000:
+        return "Legendary", 1000, 1000
+    elif coins >= 600:
+        return "Heroic", 600, 1000
+    elif coins >= 300:
+        return "Pro", 300, 600
+    elif coins >= 150:
+        return "Intermediate", 150, 300
+    elif coins >= 50:
+        return "Noob", 50, 150
+    else:
+        return "Beginner", 0, 50
+
+
+current_rank, rank_min, rank_max = get_user_rank(total_coins)
+
 # Check if user already logged today
 today_str = datetime.date.today().isoformat()
 already_logged_today = False
 if not logs_df.empty and "Date" in logs_df.columns:
     already_logged_today = today_str in logs_df["Date"].values
 
-# --- SIDEBAR NAVIGATION & HAMBURGER MENU STYLE ---
+# --- SIDEBAR NAVIGATION & WALLET ---
 st.sidebar.title("Navigation")
 navigation_selection = st.sidebar.radio(
     "Select View",
@@ -144,8 +163,15 @@ navigation_selection = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.title("Habit Wallet")
+st.sidebar.title("Habit Wallet & Rank")
 st.sidebar.metric("Habit Coins Balance", f"{total_coins} 🪙")
+st.sidebar.markdown(f"**Current Rank:** `{current_rank}`")
+if current_rank != "Legendary":
+    st.sidebar.progress(min(1.0, (total_coins - rank_min) / (rank_max - rank_min)),
+                        text=f"Next Rank at {rank_max} Coins")
+else:
+    st.sidebar.success("Max Rank Achieved!")
+
 st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | Target Completed: +25")
 
 st.sidebar.divider()
@@ -203,13 +229,13 @@ if navigation_selection == "Daily Tracking & Check-In":
                                     disabled=already_logged_today)
         split = st.selectbox("Routine Split:", ["Push", "Pull", "Legs", "Rest"], disabled=already_logged_today)
 
-        # Sliders / Soundbar style inputs for health and nutrition metrics
         sleep = st.slider("Sleep Hours:", 4.0, 10.0, 7.0, 0.5, disabled=already_logged_today)
         stress = st.slider("Stress Level (1-10):", 1, 10, 4, disabled=already_logged_today)
-        water_intake = st.slider("Water Intake (Liters):", 0.5, 6.0, 3.0, 0.1, disabled=already_logged_today)
         calorie_intake = st.slider("Calorie Intake (kcal):", 1200, 4500, 2500, 50, disabled=already_logged_today)
-        protein_intake = st.slider("Protein Intake (grams):", 30, 250, 120, 5, disabled=already_logged_today)
-        omega3_intake = st.slider("Omega-3 Intake (grams):", 0.0, 5.0, 1.0, 0.1, disabled=already_logged_today)
+
+        water_goal = st.selectbox("Hit Water Goal?", ["Yes", "No"], disabled=already_logged_today)
+        protein_goal = st.selectbox("Hit Protein Goal?", ["Yes", "No"], disabled=already_logged_today)
+        omega3_goal = st.selectbox("Took Omega-3 Supplement?", ["Yes", "No"], disabled=already_logged_today)
 
     st.divider()
     st.subheader("What led to the habit breaking or making today?")
@@ -263,10 +289,10 @@ if navigation_selection == "Daily Tracking & Check-In":
                 "Routine_Split": split,
                 "Sleep_Hours": sleep,
                 "Stress": stress,
-                "Water_Intake": water_intake,
                 "Calorie_Intake": calorie_intake,
-                "Protein_Intake": protein_intake,
-                "Omega3_Intake": omega3_intake,
+                "Water_Goal": water_goal,
+                "Protein_Goal": protein_goal,
+                "Omega3_Goal": omega3_goal,
                 "Streak": 1,
                 "Completed": int(good_habit_done),
                 "Relapsed": int(relapsed),
@@ -356,15 +382,16 @@ elif navigation_selection == "Monthly Goals & Timers":
 elif navigation_selection == "Written Cue Analysis":
     st.title("Written Cue & Health Factor Analysis")
     st.caption(
-        "Analyzing your written triggers, sleep, stress, water, calories, protein, and omega-3 intakes to uncover cues behind breaking or making habits.")
+        "Analyzing your written triggers, sleep, stress, calories, and health goals (water, protein, omega-3) to uncover cues behind breaking or making habits.")
 
     if logs_df.empty or "Written_Cue" not in logs_df.columns:
         st.info(
             "Log a few days of data with health factors and written trigger descriptions in Daily Tracking to unlock analysis!")
     else:
         st.subheader("Your Written Trigger Logs & Health Factors")
-        display_cols = [c for c in ["Date", "Written_Cue", "Sleep_Hours", "Stress", "Water_Intake", "Calorie_Intake",
-                                    "Protein_Intake", "Omega3_Intake", "Completed", "Relapsed"] if c in logs_df.columns]
+        display_cols = [c for c in
+                        ["Date", "Written_Cue", "Sleep_Hours", "Stress", "Calorie_Intake", "Water_Goal", "Protein_Goal",
+                         "Omega3_Goal", "Completed", "Relapsed"] if c in logs_df.columns]
         display_df = logs_df[display_cols].copy()
         display_df["Status"] = display_df.apply(lambda r: "Success" if r.get("Completed", 0) == 1 else (
             "Relapsed" if r.get("Relapsed", 0) == 1 else "Neutral"), axis=1)
@@ -373,7 +400,7 @@ elif navigation_selection == "Written Cue Analysis":
         st.divider()
         st.subheader("Feature Importance Analysis")
         st.caption(
-            "Shows which health, nutrition, and trigger inputs carry the most predictive weight in your tracking model.")
+            "Shows which health, nutrition goals, and trigger inputs carry the most predictive weight in your tracking model.")
 
         try:
             rf_model = model.named_steps["rf"]
@@ -412,6 +439,6 @@ elif navigation_selection == "Journal Archive":
             with st.expander(f"Entry on {row.get('Date', 'Unknown Date')} — Relapsed: {row.get('Relapsed', 0)}"):
                 st.write(f"**Written Trigger Context:** {row.get('Written_Cue', 'None provided.')}")
                 st.write(
-                    f"**Health Log:** Sleep: {row.get('Sleep_Hours', 'N/A')}h | Stress: {row.get('Stress', 'N/A')}/10 | Water: {row.get('Water_Intake', 'N/A')}L | Calories: {row.get('Calorie_Intake', 'N/A')}kcal | Protein: {row.get('Protein_Intake', 'N/A')}g | Omega-3: {row.get('Omega3_Intake', 'N/A')}g")
+                    f"**Health Log:** Sleep: {row.get('Sleep_Hours', 'N/A')}h | Stress: {row.get('Stress', 'N/A')}/10 | Calories: {row.get('Calorie_Intake', 'N/A')}kcal | Water Goal Met: {row.get('Water_Goal', 'N/A')} | Protein Goal Met: {row.get('Protein_Goal', 'N/A')} | Omega-3 Taken: {row.get('Omega3_Goal', 'N/A')}")
                 st.write(f"**Journal Note:** {row.get('Journal', 'No notes provided.')}")
                 st.write(f"*Alternate Habit Used:* {row.get('Alternate_Habit', 'None')}")
