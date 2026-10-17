@@ -56,10 +56,14 @@ HABITS_CONFIG_FILE = "habits_config.json"
 def load_habits_config():
     if os.path.exists(HABITS_CONFIG_FILE):
         with open(HABITS_CONFIG_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            if "habit_stacks" not in data:
+                data["habit_stacks"] = []
+            return data
     return {
         "good_habits": ["Gym Workout (PPLR)", "Daily LeetCode Problem", "Yamaha Keyboard Practice"],
-        "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"]
+        "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"],
+        "habit_stacks": []
     }
 
 
@@ -175,8 +179,15 @@ if not logs_df.empty and "Date" in logs_df.columns:
 st.sidebar.title("Navigation")
 navigation_selection = st.sidebar.radio(
     "Select View",
-    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "Written Cue Analysis", "Consistency Heatmap",
-     "Weekly Report", "Journal Archive"]
+    [
+        "Daily Tracking & Check-In",
+        "Habit Stacking Builder",
+        "Monthly Goals & Timers",
+        "Written Cue Analysis",
+        "Consistency Heatmap",
+        "Weekly Report",
+        "Journal Archive"
+    ]
 )
 
 st.sidebar.divider()
@@ -215,6 +226,12 @@ for gh in list(habits_config["good_habits"]):
 # --- CONTENT AREA SWITCHED BY SIDEBAR RADIO ---
 if navigation_selection == "Daily Tracking & Check-In":
     st.title("Daily Habit & Relapse Tracker")
+
+    # Dynamic Habit Stacking Reminders
+    active_stacks = habits_config.get("habit_stacks", [])
+    if active_stacks:
+        stack_markdown = "\n".join([f"- **After I** {s['current']}, **I will** {s['new']}." for s in active_stacks])
+        st.info(f"**💡 Your Active Habit Stacks:**\n{stack_markdown}")
 
     if already_logged_today:
         st.warning(
@@ -334,6 +351,43 @@ if navigation_selection == "Daily Tracking & Check-In":
     else:
         st.info("Check-in complete for today. You can still add or delete habits anytime in the sidebar!")
 
+elif navigation_selection == "Habit Stacking Builder":
+    st.title("🔗 Habit Stacking Builder")
+    st.caption("Use James Clear's formula to anchor new behaviors to existing routines.")
+
+    with st.form("stack_builder"):
+        st.subheader("Create a New Stack")
+        current_habit = st.text_input("Current Established Habit (The Anchor):",
+                                      placeholder="e.g., Pouring my morning coffee")
+        new_habit = st.text_input("New Habit (The Action):", placeholder="e.g., Read 1 page of a book")
+
+        st.info(
+            f"**Formula Preview:** After I *{current_habit if current_habit else '[Current Habit]'}*, I will *{new_habit if new_habit else '[New Habit]'}*.")
+
+        if st.form_submit_button("Save Habit Stack"):
+            if current_habit and new_habit:
+                habits_config["habit_stacks"].append({
+                    "current": current_habit,
+                    "new": new_habit
+                })
+                save_habits_config(habits_config)
+                st.success("Habit stack saved! It will now appear as a trigger reminder in your Daily Tracking tab.")
+                st.rerun()
+
+    st.divider()
+    st.subheader("Your Active Habit Stacks")
+    stacks = habits_config.get("habit_stacks", [])
+    if not stacks:
+        st.info("No habit stacks built yet.")
+    else:
+        for idx, stack in enumerate(stacks):
+            col1, col2 = st.columns([4, 1])
+            col1.markdown(f"**After I** {stack['current']}, **I will** {stack['new']}.")
+            if col2.button("Delete", key=f"del_stack_{idx}"):
+                habits_config["habit_stacks"].pop(idx)
+                save_habits_config(habits_config)
+                st.rerun()
+
 elif navigation_selection == "Monthly Goals & Timers":
     st.title("Monthly Goals, Timers & Target Completion Bonus")
     st.caption(
@@ -449,7 +503,6 @@ elif navigation_selection == "Consistency Heatmap":
     if logs_df.empty or "Date" not in logs_df.columns:
         st.info("Log some daily habit data to populate your annual consistency heatmap!")
     else:
-        # Build full year date range dataframe
         logs_df['ParsedDate'] = pd.to_datetime(logs_df['Date']).dt.date
         year_start = datetime.date(datetime.date.today().year, 1, 1)
         year_end = datetime.date(datetime.date.today().year, 12, 31)
@@ -459,14 +512,13 @@ elif navigation_selection == "Consistency Heatmap":
         full_year_df = full_year_df.merge(logs_df, on='Date', how='left')
 
 
-        # Scoring function for cell colors (2 = Great, 1 = Neutral/Partial, 0 = Missed/Relapsed)
         def get_score(row):
             if pd.isna(row.get('Completed')):
-                return 0  # Missed day
+                return 0
             if row.get('Relapsed', 0) == 1:
-                return 0  # Relapsed
+                return 0
             if row.get('Completed', 0) == 1:
-                return 2  # Crushed it
+                return 2
             return 1
 
 
@@ -474,12 +526,10 @@ elif navigation_selection == "Consistency Heatmap":
         full_year_df['Week'] = pd.to_datetime(full_year_df['Date']).dt.isocalendar().week
         full_year_df['DayOfWeek'] = pd.to_datetime(full_year_df['Date']).dt.dayofweek
 
-        # Pivot table for grid rendering (Days of week vs Weeks)
         heatmap_pivot = full_year_df.pivot(index='DayOfWeek', columns='Week', values='Score').fillna(0)
 
         st.subheader(f"Activity Grid — {datetime.date.today().year}")
 
-        # Render a clean styled bar/area view representing consistency score per day over time
         chart_data = full_year_df.set_index('Date')['Score']
         st.line_chart(chart_data)
 
