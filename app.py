@@ -9,6 +9,22 @@ st.set_page_config(page_title="Atomic Habit & Goal Tracker", page_icon="⚡", la
 
 GOALS_FILE = "goals_config.json"
 BONUS_LOG_FILE = "bonus_coins_log.json"
+HABITS_CONFIG_FILE = "habits_config.json"
+
+
+def load_habits_config():
+    if os.path.exists(HABITS_CONFIG_FILE):
+        with open(HABITS_CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "good_habits": ["Gym Workout (PPLR)", "Daily LeetCode Problem", "Yamaha Keyboard Practice"],
+        "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"]
+    }
+
+
+def save_habits_config(data):
+    with open(HABITS_CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def load_goals():
@@ -35,6 +51,7 @@ def save_bonus_log(data):
         json.dump(data, f, indent=2)
 
 
+habits_config = load_habits_config()
 goals_data = load_goals()
 bonus_log = load_bonus_log()
 
@@ -61,16 +78,36 @@ def calculate_habit_coins(df, bonuses):
 
 total_coins = calculate_habit_coins(logs_df, bonus_log)
 
-# Check if user already logged today (Locking Mechanism)
+# Check if user already logged today (Locking Mechanism for Daily Log Only)
 today_str = datetime.date.today().isoformat()
 already_logged_today = False
 if not logs_df.empty and "Date" in logs_df.columns:
     already_logged_today = today_str in logs_df["Date"].values
 
-# --- SIDEBAR: HABIT COINS WALLET ---
+# --- SIDEBAR: HABIT WALLET & HABIT MANAGER (Always Unlocked) ---
 st.sidebar.title("🪙 Habit Wallet")
 st.sidebar.metric("Habit Coins Balance", f"{total_coins} Coins")
-st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!** (Min: 0)")
+st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!**")
+
+st.sidebar.divider()
+st.sidebar.subheader("⚙️ Habit Manager")
+st.sidebar.caption("You can add or delete habits at any time!")
+
+new_good_habit = st.sidebar.text_input("Add New Good Habit:")
+if st.sidebar.button("➕ Add Good Habit") and new_good_habit:
+    if new_good_habit not in habits_config["good_habits"]:
+        habits_config["good_habits"].append(new_good_habit)
+        save_habits_config(habits_config)
+        st.sidebar.success(f"Added '{new_good_habit}'!")
+        st.rerun()
+
+for gh in list(habits_config["good_habits"]):
+    col_s1, col_s2 = st.sidebar.columns([4, 1])
+    col_s1.write(f"✅ {gh}")
+    if col_s2.button("🗑️", key=f"del_gh_{gh}"):
+        habits_config["good_habits"].remove(gh)
+        save_habits_config(habits_config)
+        st.rerun()
 
 # --- NAVIGATION TABS ---
 tab_track, tab_goals, tab_cues, tab_report, tab_journal = st.tabs([
@@ -86,14 +123,17 @@ with tab_track:
 
     if already_logged_today:
         st.warning(
-            "🔒 **Today's check-in is locked!** You have already submitted your data for today. "
-            "To prevent editing past logs ('lagging'), entries can only be submitted once per day."
+            "🔒 **Today's check-in is locked!** You have already submitted your daily log. "
+            "However, you can still add new habits or manage goals anytime using the sidebar!"
         )
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Habit Execution")
-        good_habit_done = st.checkbox("✅ Completed Good Habit Today?", disabled=already_logged_today)
+        active_habit = st.selectbox("Select Good Habit to Track Today:",
+                                    habits_config["good_habits"] if habits_config["good_habits"] else [
+                                        "No habits configured"])
+        good_habit_done = st.checkbox(f"✅ Completed '{active_habit}' Today?", disabled=already_logged_today)
         relapsed = st.checkbox("❌ Relapsed on Bad Habit Today?", disabled=already_logged_today)
 
         alternate_habit = "None"
@@ -115,16 +155,14 @@ with tab_track:
         energy = st.slider("Energy (1-10):", 1, 10, 7, disabled=already_logged_today)
         stress = st.slider("Stress (1-10):", 1, 10, 4, disabled=already_logged_today)
 
-    # --- NEW: Write down what led to the habit ---
     st.divider()
     st.subheader("📝 What led to the habit today?")
     written_cue = st.text_input(
-        "Describe what happened right before your habit or urge (e.g., 'felt bored after finishing lecture', 'drank coffee at 4pm'):",
+        "Describe what happened right before your habit or urge:",
         placeholder="Write your specific trigger context...",
         disabled=already_logged_today
     )
 
-    # Active Monthly Challenge Check-In
     st.subheader("🎯 Active Monthly Challenge Daily Check-In")
     goal_checkins = {}
 
@@ -187,7 +225,7 @@ with tab_track:
             st.success("Log saved and coins calculated successfully!")
             st.rerun()
     else:
-        st.info("Check-in complete for today. Come back tomorrow!")
+        st.info("Check-in complete for today. You can still add or delete habits anytime in the sidebar!")
 
 with tab_goals:
     st.title("⏳ Monthly Goals, Timers & Target Completion Bonus")
@@ -276,8 +314,7 @@ with tab_cues:
 
         st.divider()
         st.subheader("🤖 Random Forest Feature Importance")
-        st.caption(
-            "Shows which contextual factors (Sleep, Stress, Energy, Trigger Category) carry the most predictive weight in your ML model.")
+        st.caption("Shows which contextual factors carry the most predictive weight in your ML model.")
 
         try:
             rf_model = model.named_steps["rf"]
