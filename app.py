@@ -1,12 +1,13 @@
 import os
 import json
 import datetime
+import time
 import pandas as pd
-import streamlit as st
 import numpy as np
+import streamlit as st
 from ml_engine import train_and_get_model, USER_CSV
 
-st.set_page_config(page_title="Atomic Habit & Gym Tracker", page_icon="🪙", layout="wide")
+st.set_page_config(page_title="Atomic Habit & Goal Tracker", page_icon="🪙", layout="wide")
 
 # --- CUSTOM NEON THEME CSS ---
 st.markdown("""
@@ -17,7 +18,7 @@ st.markdown("""
     .stButton>button { background: linear-gradient(90deg, #00ffcc 0%, #0077ff 100%); color: #0b0f19; font-weight: bold; border: none; border-radius: 8px; box-shadow: 0 0 15px rgba(0, 255, 204, 0.4); transition: 0.3s ease; }
     .stButton>button:hover { opacity: 0.85; box-shadow: 0 0 25px rgba(0, 255, 204, 0.8); }
     [data-testid="stMetricValue"] { color: #00ffcc !important; text-shadow: 0 0 8px rgba(0, 255, 204, 0.4); }
-    .stTextInput>div>div>input, .stSelectbox>div>div>select, textarea { background-color: #1f2937 !important; color: #ffffff !important; border: 1px solid #374151 !important; border-radius: 6px !important; }
+    .stTextInput>div>div>input, .stSelectbox>div>div>select, .stRadio>div, textarea { background-color: #1f2937 !important; color: #ffffff !important; border: 1px solid #374151 !important; border-radius: 6px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -41,11 +42,17 @@ def save_json(filepath, data):
         json.dump(data, f, indent=2)
 
 
-habits_config = load_json(HABITS_CONFIG_FILE, {
-    "good_habits": ["Daily LeetCode Problem", "Yamaha Keyboard Practice"],
-    "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"],
-    "habit_stacks": []
-})
+# Load Habit Configurations
+habits_config_raw = load_json(HABITS_CONFIG_FILE, {})
+habits_config = {
+    "good_habits": habits_config_raw.get("good_habits", ["Daily LeetCode Problem", "Yamaha Keyboard Practice"]),
+    "bad_habits": habits_config_raw.get("bad_habits", ["Doomscrolling on Phone", "Procrastinating on Studies"]),
+    "alternate_habits": habits_config_raw.get("alternate_habits",
+                                              ["Played Yamaha keyboard", "Did 3 Rubik's cube CFOP solves",
+                                               "Stepped outside"]),
+    "habit_stacks": habits_config_raw.get("habit_stacks", [])
+}
+
 goals_data = load_json(GOALS_FILE, {"monthly_goals": []})
 bonus_log = load_json(BONUS_LOG_FILE, {"claimed_bonuses": []})
 wallet_data = load_json(WALLET_DATA_FILE, {
@@ -61,7 +68,8 @@ except Exception:
     model = None
 
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
-workouts_df = pd.read_csv(WORKOUT_CSV) if os.path.exists(WORKOUT_CSV) else pd.DataFrame()
+workouts_df = pd.read_csv(WORKOUT_CSV) if os.path.exists(WORKOUT_CSV) else pd.DataFrame(
+    columns=["Date", "Split", "Total_Time_Mins", "Exercise", "Weight", "Sets", "Reps"])
 
 
 # --- CALCULATE HABIT COINS ---
@@ -69,7 +77,6 @@ def calculate_habit_coins(df, bonuses, wallet):
     coins = 0
     if not df.empty:
         for _, row in df.iterrows():
-            # EXACT POINT LOGIC YOU REQUESTED:
             if row.get("Completed", 0) == 1: coins += 7
 
             bh_status = str(row.get("Bad_Habit_Status", ""))
@@ -80,13 +87,15 @@ def calculate_habit_coins(df, bonuses, wallet):
             journal_note = str(row.get("Journal", ""))
             if journal_note.strip() and journal_note != "nan" and len(journal_note) > 2: coins += 3
 
-            w = row.get("Water_Goal", "Yes")
-            p = row.get("Protein_Goal", "Yes")
-            o = row.get("Omega3_Goal", "Yes")
-            if w == "Yes" and p == "Yes" and o == "Yes":
-                coins += 2
-            else:
-                coins -= 1
+            w = row.get("Water_Goal", "NaN")
+            p = row.get("Protein_Goal", "NaN")
+            o = row.get("Omega3_Goal", "NaN")
+
+            if pd.notna(w) and w != "NaN":
+                if w == "Yes" and p == "Yes" and o == "Yes":
+                    coins += 2
+                else:
+                    coins -= 1
 
             if "Fail" in str(row.get("Target_Checkin", "Pass")): coins -= 15
 
@@ -158,7 +167,7 @@ navigation_selection = st.sidebar.radio(
     "Select View",
     [
         "Daily Tracking",
-        "Gym & Lifting Tracker",
+        "Health Tracker",
         "Rewards Vault",
         "Monthly Goals",
         "Analytics & Reports",
@@ -175,7 +184,8 @@ if current_rank != "Legendary":
 
 st.sidebar.divider()
 st.sidebar.subheader("Habit Manager")
-new_good_habit = st.sidebar.text_input("Add New Good Habit:")
+
+new_good_habit = st.sidebar.text_input("Add Good Habit:")
 if st.sidebar.button("Add Good Habit") and new_good_habit:
     if new_good_habit not in habits_config["good_habits"]:
         habits_config["good_habits"].append(new_good_habit)
@@ -185,15 +195,48 @@ if st.sidebar.button("Add Good Habit") and new_good_habit:
 for gh in list(habits_config["good_habits"]):
     col_s1, col_s2 = st.sidebar.columns([4, 1])
     col_s1.write(gh)
-    if col_s2.button("X", key=f"del_gh_{gh}"):
+    if col_s2.button("Del", key=f"del_gh_{gh}"):
         habits_config["good_habits"].remove(gh)
+        save_json(HABITS_CONFIG_FILE, habits_config)
+        st.rerun()
+
+st.sidebar.markdown("---")
+
+new_bad_habit = st.sidebar.text_input("Add Bad Habit (To Quit):")
+if st.sidebar.button("Add Bad Habit") and new_bad_habit:
+    if new_bad_habit not in habits_config["bad_habits"]:
+        habits_config["bad_habits"].append(new_bad_habit)
+        save_json(HABITS_CONFIG_FILE, habits_config)
+        st.rerun()
+
+for bh in list(habits_config["bad_habits"]):
+    col_s1, col_s2 = st.sidebar.columns([4, 1])
+    col_s1.write(bh)
+    if col_s2.button("Del", key=f"del_bh_{bh}"):
+        habits_config["bad_habits"].remove(bh)
+        save_json(HABITS_CONFIG_FILE, habits_config)
+        st.rerun()
+
+st.sidebar.markdown("---")
+
+new_alt_habit = st.sidebar.text_input("Add Alternate Habit:")
+if st.sidebar.button("Add Alternate Habit") and new_alt_habit:
+    if new_alt_habit not in habits_config["alternate_habits"]:
+        habits_config["alternate_habits"].append(new_alt_habit)
+        save_json(HABITS_CONFIG_FILE, habits_config)
+        st.rerun()
+
+for alt in list(habits_config["alternate_habits"]):
+    col_s1, col_s2 = st.sidebar.columns([4, 1])
+    col_s1.write(alt)
+    if col_s2.button("Del", key=f"del_alt_{alt}"):
+        habits_config["alternate_habits"].remove(alt)
         save_json(HABITS_CONFIG_FILE, habits_config)
         st.rerun()
 
 st.sidebar.divider()
 st.sidebar.subheader("Advanced Data")
-if st.sidebar.button("⚠️ Refresh / Reset All App Data"):
-    # Clear all tracking files to start fresh
+if st.sidebar.button("Refresh / Reset All App Data"):
     for f in [USER_CSV, WORKOUT_CSV, GOALS_FILE, BONUS_LOG_FILE, WALLET_DATA_FILE]:
         if os.path.exists(f): os.remove(f)
     st.rerun()
@@ -202,20 +245,47 @@ if st.sidebar.button("⚠️ Refresh / Reset All App Data"):
 if navigation_selection == "Daily Tracking":
     st.title("Daily Habit Tracker")
 
+    st.subheader("Habit Stacking Builder")
+    st.caption("After [Current Habit], I will [New Habit].")
+
+    active_stacks = habits_config.get("habit_stacks", [])
+    if active_stacks:
+        for idx, stack in enumerate(active_stacks):
+            col_st1, col_st2 = st.columns([4, 1])
+            col_st1.markdown(f"**After I** {stack['current']}, **I will** {stack['new']}.")
+            if col_st2.button("Del", key=f"del_stack_{idx}"):
+                habits_config["habit_stacks"].pop(idx)
+                save_json(HABITS_CONFIG_FILE, habits_config)
+                st.rerun()
+
+    with st.expander("Build a New Stack"):
+        current_habit = st.text_input("Current Established Habit (The Anchor):")
+        new_habit = st.text_input("New Habit (The Action):")
+        if st.button("Save Habit Stack"):
+            if current_habit and new_habit:
+                habits_config["habit_stacks"].append({"current": current_habit, "new": new_habit})
+                save_json(HABITS_CONFIG_FILE, habits_config)
+                st.rerun()
+
+    st.divider()
+
     if already_logged_today:
-        st.warning("Today's check-in is locked to prevent lagging past data. You can still use the Gym Tracker!")
+        st.warning("Locked: Today's check-in is submitted. You can still use the Health Tracker.")
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1. Good Habit")
-        active_habit = st.selectbox("Select Good Habit to Track Today:",
-                                    habits_config["good_habits"] if habits_config["good_habits"] else [
-                                        "No habits configured"])
-        good_habit_done = st.checkbox(f"✅ Completed Good Habit Today? (+7 Coins)", disabled=already_logged_today)
+        active_good = st.selectbox("Select Good Habit to Track Today:",
+                                   habits_config["good_habits"] if habits_config["good_habits"] else ["None"])
+        good_habit_done = st.checkbox(f"Completed Good Habit Today? (+7 Coins)", disabled=already_logged_today)
 
         st.subheader("2. Bad Habit & Urges")
+        active_bad = st.selectbox("Target Bad Habit to Watch Out For:",
+                                  habits_config["bad_habits"] if habits_config["bad_habits"] else ["None"],
+                                  disabled=already_logged_today)
+
         bad_habit_status = st.radio(
-            "How did you handle your bad habit/urge today?",
+            "How did you handle your urge today?",
             [
                 "No Urge / Not Applicable (0)",
                 "Used Alternate Habit Stack Successfully (0)",
@@ -226,18 +296,16 @@ if navigation_selection == "Daily Tracking":
             disabled=already_logged_today
         )
 
+        alternate_used = st.selectbox(
+            "Alternate Habit Used to Recover:",
+            ["None"] + habits_config["alternate_habits"],
+            disabled=already_logged_today
+        )
+
     with col2:
-        st.subheader("3. Daily Context & Nutrition")
-        cue_category = st.selectbox("Trigger Category:",
-                                    ["Morning Routine", "After Class", "After Dinner", "Random Time"],
-                                    disabled=already_logged_today)
-        split = st.selectbox("Routine Split:", ["Push", "Pull", "Legs", "Rest"], disabled=already_logged_today)
+        st.subheader("3. Daily Context")
         sleep = st.slider("Sleep Hours:", 4.0, 10.0, 7.0, 0.5, disabled=already_logged_today)
         stress = st.slider("Stress Level (1-10):", 1, 10, 4, disabled=already_logged_today)
-        calorie_intake = st.slider("Calorie Intake (kcal):", 1200, 4500, 2500, 50, disabled=already_logged_today)
-        water_goal = st.selectbox("Hit Water Goal?", ["Yes", "No"], disabled=already_logged_today)
-        protein_goal = st.selectbox("Hit Protein Goal?", ["Yes", "No"], disabled=already_logged_today)
-        omega3_goal = st.selectbox("Took Omega-3 Supplement?", ["Yes", "No"], disabled=already_logged_today)
 
     st.divider()
     st.subheader("What led to the habit breaking or making today?")
@@ -269,10 +337,11 @@ if navigation_selection == "Daily Tracking":
             save_json(GOALS_FILE, goals_data)
 
             new_row = pd.DataFrame([{
-                "Cue": cue_category, "Written_Cue": written_cue, "Routine_Split": split,
-                "Sleep_Hours": sleep, "Stress": stress, "Calorie_Intake": calorie_intake,
-                "Water_Goal": water_goal, "Protein_Goal": protein_goal, "Omega3_Goal": omega3_goal,
+                "Cue": "N/A", "Written_Cue": written_cue, "Routine_Split": "N/A",
+                "Sleep_Hours": sleep, "Stress": stress,
                 "Bad_Habit_Status": bad_habit_status,
+                "Bad_Habit_Tracked": active_bad,
+                "Alternate_Habit": alternate_used,
                 "Target_Checkin": target_checkin_status, "Streak": 1, "Completed": int(good_habit_done),
                 "Journal": journal_text, "Date": today_str
             }])
@@ -280,50 +349,104 @@ if navigation_selection == "Daily Tracking":
             st.success("Log saved successfully!")
             st.rerun()
 
-elif navigation_selection == "Gym & Lifting Tracker":
-    st.title("🏋️ Gym & Lifting Tracker")
-    st.caption(
-        f"Today is **{datetime.date.today().strftime('%A')}**. Your scheduled split is **{today_split['name']}**.")
+elif navigation_selection == "Health Tracker":
+    st.title("Health Tracker")
+    st.caption(f"Today is {datetime.date.today().strftime('%A')}. Scheduled Split: {today_split['name']}.")
+
+    st.subheader("Nutrition Check-In")
+    with st.form("nutrition_form"):
+        col_n1, col_n2 = st.columns(2)
+        calorie_intake = col_n1.slider("Calorie Intake (kcal):", 1200, 4500, 2500, 50)
+        water_goal = col_n1.selectbox("Hit Water Goal?", ["Yes", "No"])
+        protein_goal = col_n2.selectbox("Hit Protein Goal?", ["Yes", "No"])
+        omega3_goal = col_n2.selectbox("Took Omega-3 Supplement?", ["Yes", "No"])
+
+        if st.form_submit_button("Save Nutrition Data"):
+            if not logs_df.empty and already_logged_today:
+                idx = logs_df[logs_df["Date"] == today_str].index[0]
+                logs_df.loc[idx, ["Calorie_Intake", "Water_Goal", "Protein_Goal", "Omega3_Goal"]] = [calorie_intake,
+                                                                                                     water_goal,
+                                                                                                     protein_goal,
+                                                                                                     omega3_goal]
+                logs_df.to_csv(USER_CSV, index=False)
+                st.success("Nutrition updated for today!")
+            else:
+                new_row = pd.DataFrame([{"Date": today_str, "Calorie_Intake": calorie_intake, "Water_Goal": water_goal,
+                                         "Protein_Goal": protein_goal, "Omega3_Goal": omega3_goal}])
+                new_row.to_csv(USER_CSV, mode="a", header=not os.path.exists(USER_CSV), index=False)
+                st.success("Nutrition saved for today!")
+            st.rerun()
+
+    st.divider()
+    st.subheader(f"Workout Logger ({today_split['name']})")
 
     with st.form("workout_form"):
-        st.subheader(f"Log {today_split['name']} Session")
-
-        # Log total gym time
         total_time = st.number_input("Total Time Spent in Gym (Minutes):", min_value=0, max_value=300, value=60)
-
         st.markdown("### Exercises")
+
         exercise_logs = []
         for ex in today_split["exercises"]:
-            col_e1, col_e2, col_e3 = st.columns([2, 1, 2])
+            col_e1, col_e2, col_e3, col_e4 = st.columns([2, 1, 1, 2])
             col_e1.write(f"**{ex}**")
-            sets = col_e2.number_input(f"Sets", min_value=0, max_value=10, value=0, key=f"set_{ex}")
-            reps = col_e3.text_input(f"Reps (e.g., 10,8,8)", key=f"rep_{ex}")
-            exercise_logs.append({"Exercise": ex, "Sets": sets, "Reps": reps})
+            w_weight = col_e2.number_input("Weight", min_value=0.0, step=2.5, key=f"w_{ex}")
+            sets = col_e3.number_input("Sets", min_value=0, max_value=10, value=0, key=f"set_{ex}")
+            reps = col_e4.text_input("Reps (e.g., 10,8,8)", key=f"rep_{ex}")
+            exercise_logs.append({"Exercise": ex, "Weight": w_weight, "Sets": sets, "Reps": reps})
 
-        if st.form_submit_button("Save Gym Session"):
+        if st.form_submit_button("Save / Update Gym Session"):
             active_exercises = [e for e in exercise_logs if e["Sets"] > 0]
             if active_exercises or total_time > 0:
-                rows = []
                 for ex in active_exercises:
-                    rows.append({
-                        "Date": today_str,
-                        "Split": today_split["name"],
-                        "Total_Time_Mins": total_time,
-                        "Exercise": ex["Exercise"],
-                        "Sets": ex["Sets"],
-                        "Reps": ex["Reps"]
-                    })
-                # If they only logged time but no sets
-                if not rows and total_time > 0:
-                    rows.append({"Date": today_str, "Split": today_split["name"], "Total_Time_Mins": total_time,
-                                 "Exercise": "General Time", "Sets": 0, "Reps": ""})
+                    existing_idx = workouts_df[
+                        (workouts_df['Date'] == today_str) & (workouts_df['Exercise'] == ex["Exercise"])].index
+                    if not existing_idx.empty:
+                        workouts_df.loc[existing_idx[0], "Sets"] += ex["Sets"]
+                        workouts_df.loc[existing_idx[0], "Reps"] = str(
+                            workouts_df.loc[existing_idx[0], "Reps"]) + "," + str(ex["Reps"])
+                        workouts_df.loc[existing_idx[0], "Weight"] = max(workouts_df.loc[existing_idx[0], "Weight"],
+                                                                         ex["Weight"])
+                        workouts_df.loc[existing_idx[0], "Total_Time_Mins"] = max(
+                            workouts_df.loc[existing_idx[0], "Total_Time_Mins"], total_time)
+                    else:
+                        new_row = pd.DataFrame([{
+                            "Date": today_str, "Split": today_split["name"], "Total_Time_Mins": total_time,
+                            "Exercise": ex["Exercise"], "Weight": ex["Weight"], "Sets": ex["Sets"], "Reps": ex["Reps"]
+                        }])
+                        workouts_df = pd.concat([workouts_df, new_row], ignore_index=True)
 
-                df_new_wo = pd.DataFrame(rows)
-                df_new_wo.to_csv(WORKOUT_CSV, mode="a", header=not os.path.exists(WORKOUT_CSV), index=False)
-                st.success("Gym session saved successfully!")
+                if not active_exercises and total_time > 0:
+                    existing_idx = workouts_df[
+                        (workouts_df['Date'] == today_str) & (workouts_df['Exercise'] == "General Time")].index
+                    if not existing_idx.empty:
+                        workouts_df.loc[existing_idx[0], "Total_Time_Mins"] = max(
+                            workouts_df.loc[existing_idx[0], "Total_Time_Mins"], total_time)
+                    else:
+                        workouts_df = pd.concat([workouts_df, pd.DataFrame(
+                            [{"Date": today_str, "Split": today_split["name"], "Total_Time_Mins": total_time,
+                              "Exercise": "General Time", "Weight": 0.0, "Sets": 0, "Reps": ""}])], ignore_index=True)
+
+                workouts_df.to_csv(WORKOUT_CSV, index=False)
+                st.success("Gym session saved and updated successfully!")
                 st.rerun()
             else:
                 st.warning("Log at least 1 set or gym time to save.")
+
+    st.divider()
+    st.subheader("ML Online Baseline Workout Analysis")
+    if not workouts_df.empty:
+        workouts_df['Volume'] = workouts_df['Weight'] * workouts_df['Sets']
+        user_vol = workouts_df.groupby('Split')['Volume'].mean().to_dict()
+
+        baseline_vol = {"Push": 3000, "Pull": 2800, "Legs": 4200, "Rest/Recovery": 0}
+
+        st.write(
+            "Comparing your average lifting volume (Weight x Sets) to simulated global online baselines for your splits:")
+        for sp, vol in user_vol.items():
+            base = baseline_vol.get(sp, 1)
+            if base > 0:
+                diff = ((vol - base) / base) * 100
+                status = "Overperforming" if diff > 0 else "Underperforming"
+                st.metric(f"{sp} Split Avg Volume", f"{vol:.0f} kg", f"{diff:.1f}% vs Online Baseline ({status})")
 
     st.divider()
     st.subheader("Recent Workout History")
@@ -370,7 +493,7 @@ elif navigation_selection == "Rewards Vault":
         else:
             col_m3.button("Not Enough 🪙", key=f"lock_{reward_name}", disabled=True)
 
-        if col_m4.button("Delete", key=f"del_rew_{reward_name}"):
+        if col_m4.button("Del", key=f"del_rew_{reward_name}"):
             del wallet_data["rewards_menu"][reward_name]
             save_json(WALLET_DATA_FILE, wallet_data)
             st.rerun()
@@ -424,11 +547,10 @@ elif navigation_selection == "Monthly Goals":
 elif navigation_selection == "Analytics & Reports":
     st.title("Analytics, Heatmap & Reports")
 
-    st.subheader("Gym & Lifting Trends (ML)")
+    st.subheader("Gym Average Time Analysis")
     if workouts_df.empty or "Total_Time_Mins" not in workouts_df.columns:
-        st.info("Log your gym sessions in the Workout Tracker to see average times!")
+        st.info("Log your gym sessions in the Health Tracker to see average times!")
     else:
-        # Get unique days and their total time
         gym_days = workouts_df.drop_duplicates(subset=['Date']).copy()
         avg_gym_time = gym_days["Total_Time_Mins"].mean()
 
