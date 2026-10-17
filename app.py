@@ -7,6 +7,58 @@ from ml_engine import train_and_get_model, USER_CSV
 
 st.set_page_config(page_title="Atomic Habit & Goal Tracker", page_icon="⚡", layout="wide")
 
+# --- CUSTOM NEON THEME CSS ---
+st.markdown("""
+    <style>
+    /* Main Background & Font Color */
+    .stApp {
+        background-color: #0b0f19;
+        color: #e5e7eb;
+    }
+
+    /* Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background-color: #111827;
+        border-right: 1px solid #1f2937;
+    }
+
+    /* Neon Glow Headers */
+    h1, h2, h3 {
+        color: #00ffcc !important;
+        text-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+    }
+
+    /* Neon Buttons */
+    .stButton>button {
+        background: linear-gradient(90deg, #00ffcc 0%, #0077ff 100%);
+        color: #0b0f19;
+        font-weight: bold;
+        border: none;
+        border-radius: 8px;
+        box-shadow: 0 0 15px rgba(0, 255, 204, 0.4);
+        transition: 0.3s ease;
+    }
+    .stButton>button:hover {
+        opacity: 0.85;
+        box-shadow: 0 0 25px rgba(0, 255, 204, 0.8);
+    }
+
+    /* Metric Cards */
+    [data-testid="stMetricValue"] {
+        color: #00ffcc !important;
+        text-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
+    }
+
+    /* Input Fields / Containers */
+    .stTextInput>div>div>input, .stSelectbox>div>div>select, textarea {
+        background-color: #1f2937 !important;
+        color: #ffffff !important;
+        border: 1px solid #374151 !important;
+        border-radius: 6px !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 GOALS_FILE = "goals_config.json"
 BONUS_LOG_FILE = "bonus_coins_log.json"
 HABITS_CONFIG_FILE = "habits_config.json"
@@ -60,7 +112,7 @@ model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 
 
-# --- CALCULATE HABIT COINS (Clamped at minimum 0) ---
+# --- CALCULATE HABIT COINS ---
 def calculate_habit_coins(df, bonuses):
     coins = 0
     if not df.empty:
@@ -78,23 +130,31 @@ def calculate_habit_coins(df, bonuses):
 
 total_coins = calculate_habit_coins(logs_df, bonus_log)
 
-# Check if user already logged today (Locking Mechanism for Daily Log Only)
+# Check if user already logged today
 today_str = datetime.date.today().isoformat()
 already_logged_today = False
 if not logs_df.empty and "Date" in logs_df.columns:
     already_logged_today = today_str in logs_df["Date"].values
 
-# --- SIDEBAR: HABIT WALLET & HABIT MANAGER (Always Unlocked) ---
-st.sidebar.title("🪙 Habit Wallet")
-st.sidebar.metric("Habit Coins Balance", f"{total_coins} Coins")
-st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!**")
+# --- SIDEBAR NAVIGATION & HAMBURGER MENU STYLE ---
+st.sidebar.title("Navigation")
+navigation_selection = st.sidebar.radio(
+    "Select View",
+    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "ML Written Cue Analysis", "ML Weekly Report",
+     "Journal Archive"]
+)
 
 st.sidebar.divider()
-st.sidebar.subheader("⚙️ Habit Manager")
-st.sidebar.caption("You can add or delete habits at any time!")
+st.sidebar.title("Habit Wallet")
+st.sidebar.metric("Habit Coins Balance", f"{total_coins} 🪙")
+st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | Target Completed: +25")
+
+st.sidebar.divider()
+st.sidebar.subheader("Habit Manager")
+st.sidebar.caption("Add or delete habits at any time!")
 
 new_good_habit = st.sidebar.text_input("Add New Good Habit:")
-if st.sidebar.button("➕ Add Good Habit") and new_good_habit:
+if st.sidebar.button("Add Good Habit") and new_good_habit:
     if new_good_habit not in habits_config["good_habits"]:
         habits_config["good_habits"].append(new_good_habit)
         save_habits_config(habits_config)
@@ -103,27 +163,19 @@ if st.sidebar.button("➕ Add Good Habit") and new_good_habit:
 
 for gh in list(habits_config["good_habits"]):
     col_s1, col_s2 = st.sidebar.columns([4, 1])
-    col_s1.write(f"✅ {gh}")
-    if col_s2.button("🗑️", key=f"del_gh_{gh}"):
+    col_s1.write(gh)
+    if col_s2.button("X", key=f"del_gh_{gh}"):
         habits_config["good_habits"].remove(gh)
         save_habits_config(habits_config)
         st.rerun()
 
-# --- NAVIGATION TABS ---
-tab_track, tab_goals, tab_cues, tab_report, tab_journal = st.tabs([
-    "🎯 Daily Tracking & Check-In",
-    "⏳ Monthly Goals & Timers",
-    "🧠 ML Written Cue Analysis",
-    "📊 ML Weekly Report",
-    "📓 Journal Archive"
-])
-
-with tab_track:
-    st.title("⚡ Daily Habit & Relapse Tracker")
+# --- CONTENT AREA SWITCHED BY SIDEBAR RADIO ---
+if navigation_selection == "Daily Tracking & Check-In":
+    st.title("Daily Habit & Relapse Tracker")
 
     if already_logged_today:
         st.warning(
-            "🔒 **Today's check-in is locked!** You have already submitted your daily log. "
+            "Today's check-in is locked! You have already submitted your daily log. "
             "However, you can still add new habits or manage goals anytime using the sidebar!"
         )
 
@@ -133,8 +185,8 @@ with tab_track:
         active_habit = st.selectbox("Select Good Habit to Track Today:",
                                     habits_config["good_habits"] if habits_config["good_habits"] else [
                                         "No habits configured"])
-        good_habit_done = st.checkbox(f"✅ Completed '{active_habit}' Today?", disabled=already_logged_today)
-        relapsed = st.checkbox("❌ Relapsed on Bad Habit Today?", disabled=already_logged_today)
+        good_habit_done = st.checkbox(f"Completed '{active_habit}' Today?", disabled=already_logged_today)
+        relapsed = st.checkbox("Relapsed on Bad Habit Today?", disabled=already_logged_today)
 
         alternate_habit = "None"
         if relapsed:
@@ -147,7 +199,7 @@ with tab_track:
 
     with col2:
         st.subheader("Daily Context (ML Inputs)")
-        cue_category = st.selectbox("Trigger Category (Law 1):",
+        cue_category = st.selectbox("Trigger Category:",
                                     ["Morning Routine", "After Class", "After Dinner", "Random Time"],
                                     disabled=already_logged_today)
         split = st.selectbox("Routine Split:", ["Push", "Pull", "Legs", "Rest"], disabled=already_logged_today)
@@ -156,23 +208,23 @@ with tab_track:
         stress = st.slider("Stress (1-10):", 1, 10, 4, disabled=already_logged_today)
 
     st.divider()
-    st.subheader("📝 What led to the habit today?")
+    st.subheader("What led to the habit today?")
     written_cue = st.text_input(
         "Describe what happened right before your habit or urge:",
         placeholder="Write your specific trigger context...",
         disabled=already_logged_today
     )
 
-    st.subheader("🎯 Active Monthly Challenge Daily Check-In")
+    st.subheader("Active Monthly Challenge Daily Check-In")
     goal_checkins = {}
 
     if not goals_data["monthly_goals"]:
-        st.info("No active monthly goals. Create one in the 'Monthly Goals' tab!")
+        st.info("No active monthly goals. Create one in the Monthly Goals tab!")
     else:
         for idx, goal in enumerate(goals_data["monthly_goals"]):
             if goal["status"] == "Active":
                 passed_today = st.radio(
-                    f"Did you uphold your target for **'{goal['goal_name']}'** today?",
+                    f"Did you uphold your target for '{goal['goal_name']}' today?",
                     ["Pass (Maintained / Kept clean)", "Fail (Relapsed / Broke target)"],
                     key=f"goal_check_{idx}",
                     disabled=already_logged_today
@@ -184,7 +236,7 @@ with tab_track:
                                 disabled=already_logged_today)
 
     if not already_logged_today:
-        if st.button("💾 Save Today's Log & Claim Coins", type="primary"):
+        if st.button("Save Today's Log & Claim Coins", type="primary"):
             if goals_data["monthly_goals"]:
                 for goal in goals_data["monthly_goals"]:
                     if goal["goal_name"] in goal_checkins:
@@ -221,22 +273,21 @@ with tab_track:
             else:
                 new_row.to_csv(USER_CSV, index=False)
 
-            st.balloons()
             st.success("Log saved and coins calculated successfully!")
             st.rerun()
     else:
         st.info("Check-in complete for today. You can still add or delete habits anytime in the sidebar!")
 
-with tab_goals:
-    st.title("⏳ Monthly Goals, Timers & Target Completion Bonus")
+elif navigation_selection == "Monthly Goals & Timers":
+    st.title("Monthly Goals, Timers & Target Completion Bonus")
     st.caption(
-        "Complete your multi-month challenges and maintain an 80% success rate to claim your +25 Habit Coins bonus!")
+        "Complete your multi-month challenges and maintain an 80% success rate to claim your +25 Habit Coins 🪙 bonus!")
 
     with st.form("add_goal_form"):
         st.subheader("Launch a New Multi-Month Challenge")
         new_goal_name = st.text_input("Goal / Challenge Name:", placeholder="e.g., No Doomscrolling")
         duration = st.number_input("Duration (in Months):", min_value=1, max_value=24, value=2)
-        submit_goal = st.form_submit_button("🚀 Start Challenge")
+        submit_goal = st.form_submit_button("Start Challenge")
 
         if submit_goal and new_goal_name:
             start_dt = datetime.datetime.now()
@@ -266,7 +317,7 @@ with tab_goals:
             ratio_str = f"{(sum(scores) / len(scores) * 100):.1f}% Success Rate" if scores else "No check-ins yet"
 
             col_g1, col_g2, col_g3 = st.columns([3, 2, 1])
-            col_g1.markdown(f"### **🎯 {goal['goal_name']}**")
+            col_g1.markdown(f"### **{goal['goal_name']}**")
             col_g1.caption(f"Status Evaluation: **{goal.get('current_eval', 'Pending')}** ({ratio_str})")
 
             remaining = target_time - datetime.datetime.now()
@@ -275,29 +326,28 @@ with tab_goals:
             if remaining.total_seconds() > 0:
                 col_g2.metric("Time Remaining", f"{remaining.days} Days Left")
             else:
-                col_g2.success("🎉 Challenge Period Ended!")
+                col_g2.success("Challenge Period Ended!")
 
             goal_key = goal["goal_name"]
             already_claimed = goal_key in bonus_log.get("claimed_bonuses", [])
 
             if is_completed and not already_claimed:
-                if col_g3.button("🎁 Claim +25 Coins!", key=f"claim_{idx}"):
+                if col_g3.button("Claim +25 🪙 Coins!", key=f"claim_{idx}"):
                     bonus_log["claimed_bonuses"].append(goal_key)
                     save_bonus_log(bonus_log)
-                    st.balloons()
-                    st.success("🎉 +25 Coins added to your wallet!")
+                    st.success("+25 🪙 Coins added to your wallet!")
                     st.rerun()
             elif already_claimed:
-                col_g3.success("✅ +25 Claimed")
+                col_g3.success("+25 Claimed")
             else:
-                if col_g3.button("🗑️ Delete", key=f"del_goal_{idx}"):
+                if col_g3.button("Delete", key=f"del_goal_{idx}"):
                     goals_data["monthly_goals"].pop(idx)
                     save_goals(goals_data)
                     st.rerun()
             st.divider()
 
-with tab_cues:
-    st.title("🧠 Machine Learning Written Cue Analysis")
+elif navigation_selection == "ML Written Cue Analysis":
+    st.title("Machine Learning Written Cue Analysis")
     st.caption(
         "Analyzing your written triggers and descriptions to find underlying patterns behind your successful habit completions vs. relapses.")
 
@@ -308,12 +358,11 @@ with tab_cues:
         st.subheader("Your Written Trigger Logs & Outcomes")
         display_df = logs_df[["Date", "Written_Cue", "Completed", "Relapsed"]].copy()
         display_df["Status"] = display_df.apply(
-            lambda r: "✅ Success" if r["Completed"] == 1 else ("❌ Relapsed" if r["Relapsed"] == 1 else "Neutral"),
-            axis=1)
+            lambda r: "Success" if r["Completed"] == 1 else ("Relapsed" if r["Relapsed"] == 1 else "Neutral"), axis=1)
         st.dataframe(display_df[["Date", "Written_Cue", "Status"]], use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("🤖 Random Forest Feature Importance")
+        st.subheader("Random Forest Feature Importance")
         st.caption("Shows which contextual factors carry the most predictive weight in your ML model.")
 
         try:
@@ -330,8 +379,8 @@ with tab_cues:
         except Exception as e:
             st.info("Complete a few more logs to generate the ML feature weights chart.")
 
-with tab_report:
-    st.title("📊 ML Weekly Progress Report")
+elif navigation_selection == "ML Weekly Report":
+    st.title("ML Weekly Progress Report")
     if logs_df.empty or "Relapsed" not in logs_df.columns:
         st.info("Log a few days of data in Daily Tracking to generate your weekly report!")
     else:
@@ -344,8 +393,8 @@ with tab_report:
         r2.metric("Completion Rate", f"{completion_rate:.1f}%")
         r3.metric("Total Days Logged", f"{len(logs_df)} Days")
 
-with tab_journal:
-    st.title("📓 Journal Archive")
+elif navigation_selection == "Journal Archive":
+    st.title("Journal Archive")
     if logs_df.empty or "Journal" not in logs_df.columns:
         st.info("No journal entries yet.")
     else:
