@@ -28,6 +28,8 @@ BONUS_LOG_FILE = "bonus_coins_log.json"
 HABITS_CONFIG_FILE = "habits_config.json"
 WALLET_DATA_FILE = "wallet_data.json"
 WORKOUT_CSV = "workout_logs.csv"
+STUDY_CSV = "study_logs.csv"
+CONFIDENCE_FILE = "confidence_radar.json"
 
 
 def load_json(filepath, default_data):
@@ -42,7 +44,6 @@ def save_json(filepath, data):
         json.dump(data, f, indent=2)
 
 
-# Load Habit Configurations
 habits_config_raw = load_json(HABITS_CONFIG_FILE, {})
 habits_config = {
     "good_habits": habits_config_raw.get("good_habits", ["Daily LeetCode Problem", "Yamaha Keyboard Practice"]),
@@ -57,11 +58,12 @@ goals_data = load_json(GOALS_FILE, {"monthly_goals": []})
 bonus_log = load_json(BONUS_LOG_FILE, {"claimed_bonuses": []})
 wallet_data = load_json(WALLET_DATA_FILE, {
     "spent_coins": 0,
+    "study_coins_earned": 0,
     "rewards_menu": {},
     "redemption_history": []
 })
+confidence_data = load_json(CONFIDENCE_FILE, {})
 
-# Train ML model & load logs
 try:
     model = train_and_get_model()
 except Exception:
@@ -70,6 +72,8 @@ except Exception:
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 workouts_df = pd.read_csv(WORKOUT_CSV) if os.path.exists(WORKOUT_CSV) else pd.DataFrame(
     columns=["Date", "Split", "Total_Time_Mins", "Exercise", "Weight", "Sets", "Reps"])
+study_df = pd.read_csv(STUDY_CSV) if os.path.exists(STUDY_CSV) else pd.DataFrame(
+    columns=["Date", "Task_Type", "Duration_Mins", "Focus_Depth"])
 
 
 # --- CALCULATE HABIT COINS ---
@@ -113,6 +117,7 @@ def calculate_habit_coins(df, bonuses, wallet):
         if goal["goal_name"] in bonuses.get("claimed_bonuses", []):
             coins += goal.get("duration_months", 1) * 25
 
+    coins += wallet.get("study_coins_earned", 0)
     coins -= wallet.get("spent_coins", 0)
 
     return max(0, coins)
@@ -168,6 +173,7 @@ navigation_selection = st.sidebar.radio(
     [
         "Daily Tracking",
         "Health Tracker",
+        "Study Tracker",
         "Rewards Vault",
         "Monthly Goals",
         "Analytics & Reports",
@@ -237,7 +243,7 @@ for alt in list(habits_config["alternate_habits"]):
 st.sidebar.divider()
 st.sidebar.subheader("Advanced Data")
 if st.sidebar.button("Refresh / Reset All App Data"):
-    for f in [USER_CSV, WORKOUT_CSV, GOALS_FILE, BONUS_LOG_FILE, WALLET_DATA_FILE]:
+    for f in [USER_CSV, WORKOUT_CSV, STUDY_CSV, GOALS_FILE, BONUS_LOG_FILE, WALLET_DATA_FILE, CONFIDENCE_FILE]:
         if os.path.exists(f): os.remove(f)
     st.rerun()
 
@@ -270,7 +276,7 @@ if navigation_selection == "Daily Tracking":
     st.divider()
 
     if already_logged_today:
-        st.warning("Locked: Today's check-in is submitted. You can still use the Health Tracker.")
+        st.warning("Locked: Today's check-in is submitted. You can still use the Health or Study Trackers.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -350,7 +356,7 @@ if navigation_selection == "Daily Tracking":
             st.rerun()
 
 elif navigation_selection == "Health Tracker":
-    st.title("Health Tracker")
+    st.title("Health & Gym Tracker")
     st.caption(f"Today is {datetime.date.today().strftime('%A')}. Scheduled Split: {today_split['name']}.")
 
     st.subheader("Nutrition Check-In")
@@ -448,12 +454,70 @@ elif navigation_selection == "Health Tracker":
                 status = "Overperforming" if diff > 0 else "Underperforming"
                 st.metric(f"{sp} Split Avg Volume", f"{vol:.0f} kg", f"{diff:.1f}% vs Online Baseline ({status})")
 
+elif navigation_selection == "Study Tracker":
+    st.title("Study & Academics Tracker")
+    st.caption("Measure the quantity of your work and the cognitive load it requires.")
+
+    st.subheader("Log Study Session")
+    with st.form("study_form"):
+        col_s1, col_s2, col_s3 = st.columns(3)
+        task_type = col_s1.selectbox("Task Type", ["LeetCode / DSA", "Machine Learning Projects", "Coursework / Exams",
+                                                   "General Reading"])
+        duration = col_s2.number_input("Duration (Minutes)", min_value=5, max_value=600, value=60, step=5)
+        focus_depth = col_s3.slider("Focus Depth (1-10)", 1, 10, 7)
+
+        if st.form_submit_button("Save Study Session"):
+            new_study = pd.DataFrame(
+                [{"Date": today_str, "Task_Type": task_type, "Duration_Mins": duration, "Focus_Depth": focus_depth}])
+            new_study.to_csv(STUDY_CSV, mode="a", header=not os.path.exists(STUDY_CSV), index=False)
+            st.success("Study session logged!")
+            st.rerun()
+
     st.divider()
-    st.subheader("Recent Workout History")
-    if not workouts_df.empty:
-        st.dataframe(workouts_df.tail(15).sort_index(ascending=False), use_container_width=True, hide_index=True)
-    else:
-        st.info("No exercises logged yet.")
+    st.subheader("Dynamic Coding Bounties")
+    st.caption("Earn immediate coins added to your wallet for completing coding tasks.")
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    if col_b1.button("Easy Problem (+2 🪙)"):
+        wallet_data["study_coins_earned"] += 2
+        save_json(WALLET_DATA_FILE, wallet_data)
+        st.success("Earned 2 coins!")
+        st.rerun()
+    if col_b2.button("Medium Problem (+5 🪙)"):
+        wallet_data["study_coins_earned"] += 5
+        save_json(WALLET_DATA_FILE, wallet_data)
+        st.success("Earned 5 coins!")
+        st.rerun()
+    if col_b3.button("Hard Problem (+10 🪙)"):
+        wallet_data["study_coins_earned"] += 10
+        save_json(WALLET_DATA_FILE, wallet_data)
+        st.success("Earned 10 coins!")
+        st.rerun()
+    if col_b4.button("Project Milestone (+20 🪙)"):
+        wallet_data["study_coins_earned"] += 20
+        save_json(WALLET_DATA_FILE, wallet_data)
+        st.success("Earned 20 coins!")
+        st.rerun()
+
+    st.divider()
+    st.subheader("Spaced Repetition Confidence Radar")
+    st.caption("Log topics and your confidence level (1-10) to know what to study next.")
+
+    with st.form("confidence_form"):
+        col_c1, col_c2 = st.columns(2)
+        new_topic = col_c1.text_input("Topic Name (e.g., Binary Search Trees)")
+        conf_level = col_c2.slider("Current Confidence (1-10)", 1, 10, 5)
+        if st.form_submit_button("Update Radar"):
+            if new_topic:
+                confidence_data[new_topic] = {"confidence": conf_level, "last_reviewed": today_str}
+                save_json(CONFIDENCE_FILE, confidence_data)
+                st.success("Radar updated!")
+                st.rerun()
+
+    if confidence_data:
+        st.write("**Topics Needing Review (Lowest Confidence First):**")
+        conf_df = pd.DataFrame.from_dict(confidence_data, orient='index').reset_index()
+        conf_df.columns = ["Topic", "Confidence Level", "Last Reviewed"]
+        st.dataframe(conf_df.sort_values("Confidence Level"), hide_index=True)
 
 elif navigation_selection == "Rewards Vault":
     st.title("Rewards Vault (Cheat Days)")
@@ -547,18 +611,26 @@ elif navigation_selection == "Monthly Goals":
 elif navigation_selection == "Analytics & Reports":
     st.title("Analytics, Heatmap & Reports")
 
-    st.subheader("Gym Average Time Analysis")
-    if workouts_df.empty or "Total_Time_Mins" not in workouts_df.columns:
-        st.info("Log your gym sessions in the Health Tracker to see average times!")
+    st.subheader("Brain vs. Brawn (CNS Load Analytics)")
+    st.caption(
+        "Cross-referencing your total gym volume against your average daily study focus depth to visualize cognitive drain.")
+    if not workouts_df.empty and not study_df.empty:
+        workouts_df['Volume'] = workouts_df['Weight'] * workouts_df['Sets']
+        w_agg = workouts_df.groupby("Date")["Volume"].sum().reset_index()
+        s_agg = study_df.groupby("Date")["Focus_Depth"].mean().reset_index()
+
+        merged_cns = pd.merge(w_agg, s_agg, on="Date", how="outer").fillna(0).sort_values("Date")
+
+        # Normalize the metrics so they fit cleanly on the same line chart
+        if merged_cns['Volume'].max() > 0:
+            merged_cns['Normalized Gym Volume'] = merged_cns['Volume'] / merged_cns['Volume'].max() * 10
+        else:
+            merged_cns['Normalized Gym Volume'] = 0
+
+        chart_data = merged_cns.rename(columns={"Focus_Depth": "Average Focus Depth (1-10)"})
+        st.line_chart(chart_data.set_index("Date")[["Normalized Gym Volume", "Average Focus Depth (1-10)"]])
     else:
-        gym_days = workouts_df.drop_duplicates(subset=['Date']).copy()
-        avg_gym_time = gym_days["Total_Time_Mins"].mean()
-
-        col_t1, col_t2 = st.columns(2)
-        col_t1.metric("Average Gym Duration", f"{avg_gym_time:.1f} Mins")
-        col_t2.metric("Total Gym Days Logged", f"{len(gym_days)} Days")
-
-        st.line_chart(gym_days.set_index("Date")["Total_Time_Mins"])
+        st.info("Log both Gym sessions and Study sessions to unlock Brain vs. Brawn analytics!")
 
     st.divider()
     st.subheader("Weekly Progress Report")
@@ -610,3 +682,4 @@ elif navigation_selection == "Journal Archive":
                 st.write(
                     f"**Health Log:** Sleep: {row.get('Sleep_Hours', 'N/A')}h | Stress: {row.get('Stress', 'N/A')}/10 | Calories: {row.get('Calorie_Intake', 'N/A')}kcal | Water Goal Met: {row.get('Water_Goal', 'N/A')} | Protein Goal Met: {row.get('Protein_Goal', 'N/A')} | Omega-3 Taken: {row.get('Omega3_Goal', 'N/A')}")
                 st.write(f"**Journal Note:** {row.get('Journal', 'No notes provided.')}")
+                st.write(f"*Alternate Habit Used:* {row.get('Alternate_Habit', 'None')}")
