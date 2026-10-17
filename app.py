@@ -43,7 +43,7 @@ model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 
 
-# --- CALCULATE HABIT COINS (Including +25 Target Completion Bonus) ---
+# --- CALCULATE HABIT COINS (Clamped at a minimum of 0) ---
 def calculate_habit_coins(df, bonuses):
     coins = 0
     if not df.empty:
@@ -58,7 +58,9 @@ def calculate_habit_coins(df, bonuses):
 
     # Add +25 coins for each completed goal bonus claimed
     coins += len(bonuses.get("claimed_bonuses", [])) * 25
-    return coins
+
+    # Ensure coins never drop below 0
+    return max(0, coins)
 
 
 total_coins = calculate_habit_coins(logs_df, bonus_log)
@@ -72,7 +74,8 @@ if not logs_df.empty and "Date" in logs_df.columns:
 # --- SIDEBAR: HABIT COINS WALLET ---
 st.sidebar.title("🪙 Habit Wallet")
 st.sidebar.metric("Habit Coins Balance", f"{total_coins} Coins")
-st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!**")
+st.sidebar.caption(
+    "Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!** (Minimum: 0)")
 
 # --- NAVIGATION TABS ---
 tab_track, tab_goals, tab_report, tab_journal = st.tabs([
@@ -230,7 +233,6 @@ with tab_goals:
             else:
                 col_g2.success("🎉 Challenge Period Ended!")
 
-            # Claim +25 Bonus Button
             goal_key = goal["goal_name"]
             already_claimed = goal_key in bonus_log.get("claimed_bonuses", [])
 
