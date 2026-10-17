@@ -1,12 +1,12 @@
 import os
 import json
 import datetime
-import time
 import pandas as pd
 import streamlit as st
+import numpy as np
 from ml_engine import train_and_get_model, USER_CSV
 
-st.set_page_config(page_title="Atomic Habit & Goal Tracker", page_icon="🪙", layout="wide")
+st.set_page_config(page_title="Atomic Habit & Gym Tracker", page_icon="🪙", layout="wide")
 
 # --- CUSTOM NEON THEME CSS ---
 st.markdown("""
@@ -26,6 +26,7 @@ GOALS_FILE = "goals_config.json"
 BONUS_LOG_FILE = "bonus_coins_log.json"
 HABITS_CONFIG_FILE = "habits_config.json"
 WALLET_DATA_FILE = "wallet_data.json"
+WORKOUT_CSV = "workout_logs.csv"
 
 
 def load_json(filepath, default_data):
@@ -42,21 +43,25 @@ def save_json(filepath, data):
 
 habits_config = load_json(HABITS_CONFIG_FILE, {
     "good_habits": ["Daily LeetCode Problem", "Yamaha Keyboard Practice"],
-    "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"]
+    "bad_habits": ["Doomscrolling on Phone", "Procrastinating on Studies"],
+    "habit_stacks": []
 })
 goals_data = load_json(GOALS_FILE, {"monthly_goals": []})
 bonus_log = load_json(BONUS_LOG_FILE, {"claimed_bonuses": []})
-
 wallet_data = load_json(WALLET_DATA_FILE, {
     "spent_coins": 0,
-    "focus_coins_earned": 0,
     "rewards_menu": {},
     "redemption_history": []
 })
 
 # Train ML model & load logs
-model = train_and_get_model()
+try:
+    model = train_and_get_model()
+except Exception:
+    model = None
+
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
+workouts_df = pd.read_csv(WORKOUT_CSV) if os.path.exists(WORKOUT_CSV) else pd.DataFrame()
 
 
 # --- CALCULATE HABIT COINS ---
@@ -64,8 +69,14 @@ def calculate_habit_coins(df, bonuses, wallet):
     coins = 0
     if not df.empty:
         for _, row in df.iterrows():
+            # EXACT POINT LOGIC YOU REQUESTED:
             if row.get("Completed", 0) == 1: coins += 7
-            if row.get("Relapsed", 0) == 1: coins -= 3
+
+            bh_status = str(row.get("Bad_Habit_Status", ""))
+            if "Relapsed (-5)" in bh_status: coins -= 5
+            if "Skipped Bad Habit (-1)" in bh_status: coins -= 1
+            if "Skipped Alternate (-2)" in bh_status: coins -= 2
+
             journal_note = str(row.get("Journal", ""))
             if journal_note.strip() and journal_note != "nan" and len(journal_note) > 2: coins += 3
 
@@ -93,7 +104,6 @@ def calculate_habit_coins(df, bonuses, wallet):
         if goal["goal_name"] in bonuses.get("claimed_bonuses", []):
             coins += goal.get("duration_months", 1) * 25
 
-    coins += wallet.get("focus_coins_earned", 0)
     coins -= wallet.get("spent_coins", 0)
 
     return max(0, coins)
@@ -123,12 +133,32 @@ already_logged_today = False
 if not logs_df.empty and "Date" in logs_df.columns:
     already_logged_today = today_str in logs_df["Date"].values
 
+# --- GYM SPLIT DEFINITIONS ---
+WORKOUT_SPLITS = {
+    0: {"name": "Push", "exercises": ["Incline Chest Press", "Chest Flies", "Tricep Press", "Dips", "Lateral Raises",
+                                      "Shoulder Press"]},
+    1: {"name": "Pull",
+        "exercises": ["DB Curls", "Hammer Curls", "Shrugs", "Lat Pulldown", "Rows", "Rear Delt Exercise"]},
+    2: {"name": "Legs",
+        "exercises": ["Squats", "Leg Extension", "Hamstring Curls", "Hinges", "Calves Extension", "Ab Crunches"]},
+    3: {"name": "Rest/Recovery", "exercises": ["Stretching / Light Cardio"]},
+    4: {"name": "Push", "exercises": ["Incline Chest Press", "Chest Flies", "Tricep Press", "Dips", "Lateral Raises",
+                                      "Shoulder Press"]},
+    5: {"name": "Pull",
+        "exercises": ["DB Curls", "Hammer Curls", "Shrugs", "Lat Pulldown", "Rows", "Rear Delt Exercise"]},
+    6: {"name": "Legs",
+        "exercises": ["Squats", "Leg Extension", "Hamstring Curls", "Hinges", "Calves Extension", "Ab Crunches"]},
+}
+today_weekday = datetime.datetime.today().weekday()
+today_split = WORKOUT_SPLITS[today_weekday]
+
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("Navigation")
 navigation_selection = st.sidebar.radio(
     "Select View",
     [
         "Daily Tracking",
+        "Gym & Lifting Tracker",
         "Rewards Vault",
         "Monthly Goals",
         "Analytics & Reports",
@@ -160,33 +190,44 @@ for gh in list(habits_config["good_habits"]):
         save_json(HABITS_CONFIG_FILE, habits_config)
         st.rerun()
 
+st.sidebar.divider()
+st.sidebar.subheader("Advanced Data")
+if st.sidebar.button("⚠️ Refresh / Reset All App Data"):
+    # Clear all tracking files to start fresh
+    for f in [USER_CSV, WORKOUT_CSV, GOALS_FILE, BONUS_LOG_FILE, WALLET_DATA_FILE]:
+        if os.path.exists(f): os.remove(f)
+    st.rerun()
+
 # --- CONTENT VIEWS ---
 if navigation_selection == "Daily Tracking":
-    st.title("Daily Habit & Relapse Tracker")
+    st.title("Daily Habit Tracker")
 
     if already_logged_today:
-        st.warning(
-            "Today's check-in is locked to prevent lagging past data. You can still check your Analytics or Rewards Vault!")
+        st.warning("Today's check-in is locked to prevent lagging past data. You can still use the Gym Tracker!")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Habit Execution")
+        st.subheader("1. Good Habit")
         active_habit = st.selectbox("Select Good Habit to Track Today:",
                                     habits_config["good_habits"] if habits_config["good_habits"] else [
                                         "No habits configured"])
-        good_habit_done = st.checkbox(f"Completed '{active_habit}' Today?", disabled=already_logged_today)
-        relapsed = st.checkbox("Relapsed on Bad Habit Today?", disabled=already_logged_today)
+        good_habit_done = st.checkbox(f"✅ Completed Good Habit Today? (+7 Coins)", disabled=already_logged_today)
 
-        alternate_habit = "None"
-        if relapsed:
-            alternate_habit = st.selectbox(
-                "Alternate Habit Used to Recover:",
-                ["None", "Played Yamaha keyboard", "Did 3 Rubik's cube CFOP solves", "Stepped outside"],
-                disabled=already_logged_today
-            )
+        st.subheader("2. Bad Habit & Urges")
+        bad_habit_status = st.radio(
+            "How did you handle your bad habit/urge today?",
+            [
+                "No Urge / Not Applicable (0)",
+                "Used Alternate Habit Stack Successfully (0)",
+                "Skipped Alternate (-2)",
+                "Skipped Bad Habit (-1)",
+                "Relapsed (-5)"
+            ],
+            disabled=already_logged_today
+        )
 
     with col2:
-        st.subheader("Daily Context & Nutrition")
+        st.subheader("3. Daily Context & Nutrition")
         cue_category = st.selectbox("Trigger Category:",
                                     ["Morning Routine", "After Class", "After Dinner", "Random Time"],
                                     disabled=already_logged_today)
@@ -231,17 +272,69 @@ if navigation_selection == "Daily Tracking":
                 "Cue": cue_category, "Written_Cue": written_cue, "Routine_Split": split,
                 "Sleep_Hours": sleep, "Stress": stress, "Calorie_Intake": calorie_intake,
                 "Water_Goal": water_goal, "Protein_Goal": protein_goal, "Omega3_Goal": omega3_goal,
+                "Bad_Habit_Status": bad_habit_status,
                 "Target_Checkin": target_checkin_status, "Streak": 1, "Completed": int(good_habit_done),
-                "Relapsed": int(relapsed), "Alternate_Habit": alternate_habit, "Journal": journal_text,
-                "Date": today_str
+                "Journal": journal_text, "Date": today_str
             }])
             new_row.to_csv(USER_CSV, mode="a", header=not os.path.exists(USER_CSV), index=False)
             st.success("Log saved successfully!")
             st.rerun()
 
+elif navigation_selection == "Gym & Lifting Tracker":
+    st.title("🏋️ Gym & Lifting Tracker")
+    st.caption(
+        f"Today is **{datetime.date.today().strftime('%A')}**. Your scheduled split is **{today_split['name']}**.")
+
+    with st.form("workout_form"):
+        st.subheader(f"Log {today_split['name']} Session")
+
+        # Log total gym time
+        total_time = st.number_input("Total Time Spent in Gym (Minutes):", min_value=0, max_value=300, value=60)
+
+        st.markdown("### Exercises")
+        exercise_logs = []
+        for ex in today_split["exercises"]:
+            col_e1, col_e2, col_e3 = st.columns([2, 1, 2])
+            col_e1.write(f"**{ex}**")
+            sets = col_e2.number_input(f"Sets", min_value=0, max_value=10, value=0, key=f"set_{ex}")
+            reps = col_e3.text_input(f"Reps (e.g., 10,8,8)", key=f"rep_{ex}")
+            exercise_logs.append({"Exercise": ex, "Sets": sets, "Reps": reps})
+
+        if st.form_submit_button("Save Gym Session"):
+            active_exercises = [e for e in exercise_logs if e["Sets"] > 0]
+            if active_exercises or total_time > 0:
+                rows = []
+                for ex in active_exercises:
+                    rows.append({
+                        "Date": today_str,
+                        "Split": today_split["name"],
+                        "Total_Time_Mins": total_time,
+                        "Exercise": ex["Exercise"],
+                        "Sets": ex["Sets"],
+                        "Reps": ex["Reps"]
+                    })
+                # If they only logged time but no sets
+                if not rows and total_time > 0:
+                    rows.append({"Date": today_str, "Split": today_split["name"], "Total_Time_Mins": total_time,
+                                 "Exercise": "General Time", "Sets": 0, "Reps": ""})
+
+                df_new_wo = pd.DataFrame(rows)
+                df_new_wo.to_csv(WORKOUT_CSV, mode="a", header=not os.path.exists(WORKOUT_CSV), index=False)
+                st.success("Gym session saved successfully!")
+                st.rerun()
+            else:
+                st.warning("Log at least 1 set or gym time to save.")
+
+    st.divider()
+    st.subheader("Recent Workout History")
+    if not workouts_df.empty:
+        st.dataframe(workouts_df.tail(15).sort_index(ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("No exercises logged yet.")
+
 elif navigation_selection == "Rewards Vault":
     st.title("Rewards Vault (Cheat Days)")
-    st.caption("Spend your hard-earned habit coins to unlock guilt-free rewards and cheat tasks.")
+    st.caption("Spend your habit coins to unlock guilt-free rewards.")
 
     st.subheader("Add a Custom Reward")
     with st.form("add_reward"):
@@ -258,7 +351,7 @@ elif navigation_selection == "Rewards Vault":
     st.subheader("Available Rewards")
 
     if not wallet_data["rewards_menu"]:
-        st.info("Your vault is empty. Add a custom reward above to start spending your coins!")
+        st.info("Your vault is empty. Add a custom reward above!")
 
     for reward_name, cost in list(wallet_data["rewards_menu"].items()):
         col_m1, col_m2, col_m3, col_m4 = st.columns([3, 1, 1, 1])
@@ -269,9 +362,7 @@ elif navigation_selection == "Rewards Vault":
             if col_m3.button("Redeem", key=f"red_{reward_name}"):
                 wallet_data["spent_coins"] += cost
                 wallet_data["redemption_history"].append({
-                    "reward": reward_name,
-                    "cost": cost,
-                    "date": datetime.datetime.now().isoformat()
+                    "reward": reward_name, "cost": cost, "date": datetime.datetime.now().isoformat()
                 })
                 save_json(WALLET_DATA_FILE, wallet_data)
                 st.success(f"Unlocked! Enjoy your cheat task: {reward_name}.")
@@ -283,12 +374,6 @@ elif navigation_selection == "Rewards Vault":
             del wallet_data["rewards_menu"][reward_name]
             save_json(WALLET_DATA_FILE, wallet_data)
             st.rerun()
-
-    if wallet_data.get("redemption_history"):
-        with st.expander("Redemption History"):
-            for h in reversed(wallet_data["redemption_history"]):
-                dt_str = datetime.datetime.fromisoformat(h['date']).strftime("%b %d, %Y")
-                st.write(f"- **{h['reward']}** (-{h['cost']} 🪙) on {dt_str}")
 
 elif navigation_selection == "Monthly Goals":
     st.title("Monthly Goals & Target Bonuses")
@@ -339,21 +424,33 @@ elif navigation_selection == "Monthly Goals":
 elif navigation_selection == "Analytics & Reports":
     st.title("Analytics, Heatmap & Reports")
 
+    st.subheader("Gym & Lifting Trends (ML)")
+    if workouts_df.empty or "Total_Time_Mins" not in workouts_df.columns:
+        st.info("Log your gym sessions in the Workout Tracker to see average times!")
+    else:
+        # Get unique days and their total time
+        gym_days = workouts_df.drop_duplicates(subset=['Date']).copy()
+        avg_gym_time = gym_days["Total_Time_Mins"].mean()
+
+        col_t1, col_t2 = st.columns(2)
+        col_t1.metric("Average Gym Duration", f"{avg_gym_time:.1f} Mins")
+        col_t2.metric("Total Gym Days Logged", f"{len(gym_days)} Days")
+
+        st.line_chart(gym_days.set_index("Date")["Total_Time_Mins"])
+
+    st.divider()
     st.subheader("Weekly Progress Report")
-    if logs_df.empty or "Relapsed" not in logs_df.columns:
+    if logs_df.empty:
         st.info("Log a few days of data in Daily Tracking to generate your weekly report!")
     else:
         last_7_days = logs_df.tail(7)
-        total_relapses = last_7_days["Relapsed"].sum()
         completion_rate = last_7_days["Completed"].mean() * 100
 
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Weekly Relapses", f"{total_relapses} Times")
-        r2.metric("Completion Rate", f"{completion_rate:.1f}%")
-        r3.metric("Total Days Logged", f"{len(logs_df)} Days")
+        r1, r2 = st.columns(2)
+        r1.metric("Completion Rate", f"{completion_rate:.1f}%")
+        r2.metric("Total Days Logged", f"{len(logs_df)} Days")
 
     st.divider()
-
     st.subheader("Consistency Heatmap")
     if logs_df.empty or "Date" not in logs_df.columns:
         st.info("Log some data to populate your heatmap!")
@@ -363,12 +460,11 @@ elif navigation_selection == "Analytics & Reports":
                                                            end=datetime.date(datetime.date.today().year, 12, 31)).date})
         full_year_df = full_year_df.merge(logs_df, on='Date', how='left')
 
-        full_year_df['Score'] = full_year_df.apply(lambda r: 2 if r.get('Completed', 0) == 1 else (
-            0 if pd.isna(r.get('Completed')) or r.get('Relapsed', 0) == 1 else 1), axis=1)
+        full_year_df['Score'] = full_year_df.apply(
+            lambda r: 2 if r.get('Completed', 0) == 1 else (0 if pd.isna(r.get('Completed')) else 1), axis=1)
         st.line_chart(full_year_df.set_index('Date')['Score'])
 
     st.divider()
-
     st.subheader("Written Cue Analysis")
     if logs_df.empty or "Written_Cue" not in logs_df.columns:
         st.info("Log a few days of data to unlock analysis!")
@@ -387,9 +483,8 @@ elif navigation_selection == "Journal Archive":
         st.info("No journal entries yet.")
     else:
         for idx, row in logs_df.iterrows():
-            with st.expander(f"Entry on {row.get('Date', 'Unknown Date')} - Relapsed: {row.get('Relapsed', 0)}"):
+            with st.expander(f"Entry on {row.get('Date', 'Unknown Date')} - {row.get('Bad_Habit_Status', '')}"):
                 st.write(f"**Written Trigger Context:** {row.get('Written_Cue', 'None provided.')}")
                 st.write(
                     f"**Health Log:** Sleep: {row.get('Sleep_Hours', 'N/A')}h | Stress: {row.get('Stress', 'N/A')}/10 | Calories: {row.get('Calorie_Intake', 'N/A')}kcal | Water Goal Met: {row.get('Water_Goal', 'N/A')} | Protein Goal Met: {row.get('Protein_Goal', 'N/A')} | Omega-3 Taken: {row.get('Omega3_Goal', 'N/A')}")
                 st.write(f"**Journal Note:** {row.get('Journal', 'No notes provided.')}")
-                st.write(f"*Alternate Habit Used:* {row.get('Alternate_Habit', 'None')}")
