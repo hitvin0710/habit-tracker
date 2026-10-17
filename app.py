@@ -10,25 +10,18 @@ st.set_page_config(page_title="Atomic Habit & Goal Tracker", page_icon="⚡", la
 # --- CUSTOM NEON THEME CSS ---
 st.markdown("""
     <style>
-    /* Main Background & Font Color */
     .stApp {
         background-color: #0b0f19;
         color: #e5e7eb;
     }
-
-    /* Sidebar Styling */
     [data-testid="stSidebar"] {
         background-color: #111827;
         border-right: 1px solid #1f2937;
     }
-
-    /* Neon Glow Headers */
     h1, h2, h3 {
         color: #00ffcc !important;
         text-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
     }
-
-    /* Neon Buttons */
     .stButton>button {
         background: linear-gradient(90deg, #00ffcc 0%, #0077ff 100%);
         color: #0b0f19;
@@ -42,14 +35,10 @@ st.markdown("""
         opacity: 0.85;
         box-shadow: 0 0 25px rgba(0, 255, 204, 0.8);
     }
-
-    /* Metric Cards */
     [data-testid="stMetricValue"] {
         color: #00ffcc !important;
         text-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
     }
-
-    /* Input Fields / Containers */
     .stTextInput>div>div>input, .stSelectbox>div>div>select, textarea {
         background-color: #1f2937 !important;
         color: #ffffff !important;
@@ -112,19 +101,54 @@ model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 
 
-# --- CALCULATE HABIT COINS ---
+# --- REVISED HABIT COINS CALCULATOR ---
 def calculate_habit_coins(df, bonuses):
     coins = 0
     if not df.empty:
         for _, row in df.iterrows():
+            # +7 for completed good habit
             if row.get("Completed", 0) == 1:
-                coins += 5
-            if row.get("Relapsed", 0) == 1:
-                coins -= 3
+                coins += 7
+
+            # Journal points (+3 if written, 0 otherwise)
             journal_note = str(row.get("Journal", ""))
             if journal_note.strip() and journal_note != "nan" and len(journal_note) > 2:
+                coins += 3
+
+            # Health targets (+2 if Yes to all three, -1 if any No)
+            w = row.get("Water_Goal", "Yes")
+            p = row.get("Protein_Goal", "Yes")
+            o = row.get("Omega3_Goal", "Yes")
+            if w == "Yes" and p == "Yes" and o == "Yes":
                 coins += 2
-    coins += len(bonuses.get("claimed_bonuses", [])) * 25
+            else:
+                coins -= 1
+
+            # Monthly target daily check-in evaluation (-15 if failed that day)
+            target_eval = row.get("Target_Checkin", "Pass")
+            if "Fail" in str(target_eval):
+                coins -= 15
+
+        # Check for unlogged days penalty (-5 per missing day between first log and today)
+        try:
+            df['ParsedDate'] = pd.to_datetime(df['Date'])
+            start_date = df['ParsedDate'].min()
+            end_date = pd.Timestamp(datetime.date.today())
+            all_days = pd.date_range(start=start_date, end=end_date)
+            logged_days = set(df['ParsedDate'].dt.date)
+
+            for day in all_days:
+                if day.date() not in logged_days:
+                    coins -= 5
+        except Exception:
+            pass
+
+    # Add goal completion bonuses (duration_months * 25 coins)
+    for goal in goals_data.get("monthly_goals", []):
+        if goal["goal_name"] in bonuses.get("claimed_bonuses", []):
+            earned_bonus = goal.get("duration_months", 1) * 25
+            coins += earned_bonus
+
     return max(0, coins)
 
 
@@ -172,7 +196,8 @@ if current_rank != "Legendary":
 else:
     st.sidebar.success("Max Rank Achieved!")
 
-st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | Target Completed: +25")
+st.sidebar.caption(
+    "Good Habit: +7 | Journal: +3 | Health Goals: +2 / -1 | Missed Day: -5 | Target Fail: -15 | Target Complete: +25/month")
 
 st.sidebar.divider()
 st.sidebar.subheader("Habit Manager")
@@ -247,6 +272,7 @@ if navigation_selection == "Daily Tracking & Check-In":
 
     st.subheader("Active Monthly Challenge Daily Check-In")
     goal_checkins = {}
+    target_checkin_status = "Pass"
 
     if not goals_data["monthly_goals"]:
         st.info("No active monthly goals. Create one in the Monthly Goals tab!")
@@ -259,9 +285,12 @@ if navigation_selection == "Daily Tracking & Check-In":
                     key=f"goal_check_{idx}",
                     disabled=already_logged_today
                 )
-                goal_checkins[goal["goal_name"]] = 1 if "Pass" in passed_today else 0
+                status_val = 1 if "Pass" in passed_today else 0
+                goal_checkins[goal["goal_name"]] = status_val
+                if status_val == 0:
+                    target_checkin_status = "Fail (-15 Coins)"
 
-    st.subheader("Daily Journal (+2 Coins)")
+    st.subheader("Daily Journal (+3 Coins)")
     journal_text = st.text_area("Additional thoughts or reflections:", placeholder="Write your thoughts...",
                                 disabled=already_logged_today)
 
@@ -293,6 +322,7 @@ if navigation_selection == "Daily Tracking & Check-In":
                 "Water_Goal": water_goal,
                 "Protein_Goal": protein_goal,
                 "Omega3_Goal": omega3_goal,
+                "Target_Checkin": target_checkin_status,
                 "Streak": 1,
                 "Completed": int(good_habit_done),
                 "Relapsed": int(relapsed),
@@ -314,7 +344,7 @@ if navigation_selection == "Daily Tracking & Check-In":
 elif navigation_selection == "Monthly Goals & Timers":
     st.title("Monthly Goals, Timers & Target Completion Bonus")
     st.caption(
-        "Complete your multi-month challenges and maintain an 80% success rate to claim your +25 Habit Coins 🪙 bonus!")
+        "Complete your multi-month challenges and maintain an 80% success rate to claim your multiplied 🪙 bonus (25 coins per month)!")
 
     with st.form("add_goal_form"):
         st.subheader("Launch a New Multi-Month Challenge")
@@ -335,7 +365,7 @@ elif navigation_selection == "Monthly Goals & Timers":
                 "current_eval": "Not enough data yet (< 5 days)"
             })
             save_goals(goals_data)
-            st.success(f"Successfully launched challenge: '{new_goal_name}'!")
+            st.success(f"Successfully launched challenge: '{new_goal_name}' for {duration} months!")
             st.rerun()
 
     st.divider()
@@ -351,7 +381,8 @@ elif navigation_selection == "Monthly Goals & Timers":
 
             col_g1, col_g2, col_g3 = st.columns([3, 2, 1])
             col_g1.markdown(f"### **{goal['goal_name']}**")
-            col_g1.caption(f"Status Evaluation: **{goal.get('current_eval', 'Pending')}** ({ratio_str})")
+            col_g1.caption(
+                f"Duration: {goal['duration_months']} Months | Status: **{goal.get('current_eval', 'Pending')}** ({ratio_str})")
 
             remaining = target_time - datetime.datetime.now()
             is_completed = remaining.total_seconds() <= 0 or goal.get("current_eval") == "On Track to Pass (>= 80%)"
@@ -363,15 +394,16 @@ elif navigation_selection == "Monthly Goals & Timers":
 
             goal_key = goal["goal_name"]
             already_claimed = goal_key in bonus_log.get("claimed_bonuses", [])
+            bonus_amount = goal["duration_months"] * 25
 
             if is_completed and not already_claimed:
-                if col_g3.button("Claim +25 🪙 Coins!", key=f"claim_{idx}"):
+                if col_g3.button(f"Claim +{bonus_amount} 🪙 Coins!", key=f"claim_{idx}"):
                     bonus_log["claimed_bonuses"].append(goal_key)
                     save_bonus_log(bonus_log)
-                    st.success("+25 🪙 Coins added to your wallet!")
+                    st.success(f"+{bonus_amount} 🪙 Coins added to your wallet!")
                     st.rerun()
             elif already_claimed:
-                col_g3.success("+25 Claimed")
+                col_g3.success(f"+{bonus_amount} Claimed")
             else:
                 if col_g3.button("Delete", key=f"del_goal_{idx}"):
                     goals_data["monthly_goals"].pop(idx)
@@ -391,7 +423,7 @@ elif navigation_selection == "Written Cue Analysis":
         st.subheader("Your Written Trigger Logs & Health Factors")
         display_cols = [c for c in
                         ["Date", "Written_Cue", "Sleep_Hours", "Stress", "Calorie_Intake", "Water_Goal", "Protein_Goal",
-                         "Omega3_Goal", "Completed", "Relapsed"] if c in logs_df.columns]
+                         "Omega3_Goal", "Target_Checkin", "Completed", "Relapsed"] if c in logs_df.columns]
         display_df = logs_df[display_cols].copy()
         display_df["Status"] = display_df.apply(lambda r: "Success" if r.get("Completed", 0) == 1 else (
             "Relapsed" if r.get("Relapsed", 0) == 1 else "Neutral"), axis=1)
