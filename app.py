@@ -101,21 +101,18 @@ model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 
 
-# --- REVISED HABIT COINS CALCULATOR ---
+# --- CALCULATE HABIT COINS ---
 def calculate_habit_coins(df, bonuses):
     coins = 0
     if not df.empty:
         for _, row in df.iterrows():
-            # +7 for completed good habit
             if row.get("Completed", 0) == 1:
                 coins += 7
-
-            # Journal points (+3 if written, 0 otherwise)
+            if row.get("Relapsed", 0) == 1:
+                coins -= 3
             journal_note = str(row.get("Journal", ""))
             if journal_note.strip() and journal_note != "nan" and len(journal_note) > 2:
                 coins += 3
-
-            # Health targets (+2 if Yes to all three, -1 if any No)
             w = row.get("Water_Goal", "Yes")
             p = row.get("Protein_Goal", "Yes")
             o = row.get("Omega3_Goal", "Yes")
@@ -123,13 +120,10 @@ def calculate_habit_coins(df, bonuses):
                 coins += 2
             else:
                 coins -= 1
-
-            # Monthly target daily check-in evaluation (-15 if failed that day)
             target_eval = row.get("Target_Checkin", "Pass")
             if "Fail" in str(target_eval):
                 coins -= 15
 
-        # Check for unlogged days penalty (-5 per missing day between first log and today)
         try:
             df['ParsedDate'] = pd.to_datetime(df['Date'])
             start_date = df['ParsedDate'].min()
@@ -143,11 +137,9 @@ def calculate_habit_coins(df, bonuses):
         except Exception:
             pass
 
-    # Add goal completion bonuses (duration_months * 25 coins)
     for goal in goals_data.get("monthly_goals", []):
         if goal["goal_name"] in bonuses.get("claimed_bonuses", []):
-            earned_bonus = goal.get("duration_months", 1) * 25
-            coins += earned_bonus
+            coins += goal.get("duration_months", 1) * 25
 
     return max(0, coins)
 
@@ -183,7 +175,8 @@ if not logs_df.empty and "Date" in logs_df.columns:
 st.sidebar.title("Navigation")
 navigation_selection = st.sidebar.radio(
     "Select View",
-    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "Written Cue Analysis", "Weekly Report", "Journal Archive"]
+    ["Daily Tracking & Check-In", "Monthly Goals & Timers", "Written Cue Analysis", "Consistency Heatmap",
+     "Weekly Report", "Journal Archive"]
 )
 
 st.sidebar.divider()
@@ -447,6 +440,57 @@ elif navigation_selection == "Written Cue Analysis":
             st.bar_chart(feat_df.set_index("Feature"))
         except Exception as e:
             st.info("Complete a few more logs to generate the feature weights chart.")
+
+elif navigation_selection == "Consistency Heatmap":
+    st.title("GitHub-Style Consistency Heatmap")
+    st.caption(
+        "Visual contribution grid representing your habit consistency across the year. Green squares mean you crushed it; dark/red squares mean missed or relapsed days.")
+
+    if logs_df.empty or "Date" not in logs_df.columns:
+        st.info("Log some daily habit data to populate your annual consistency heatmap!")
+    else:
+        # Build full year date range dataframe
+        logs_df['ParsedDate'] = pd.to_datetime(logs_df['Date']).dt.date
+        year_start = datetime.date(datetime.date.today().year, 1, 1)
+        year_end = datetime.date(datetime.date.today().year, 12, 31)
+        all_dates = pd.date_range(start=year_start, end=year_end).date
+
+        full_year_df = pd.DataFrame({'Date': all_dates})
+        full_year_df = full_year_df.merge(logs_df, on='Date', how='left')
+
+
+        # Scoring function for cell colors (2 = Great, 1 = Neutral/Partial, 0 = Missed/Relapsed)
+        def get_score(row):
+            if pd.isna(row.get('Completed')):
+                return 0  # Missed day
+            if row.get('Relapsed', 0) == 1:
+                return 0  # Relapsed
+            if row.get('Completed', 0) == 1:
+                return 2  # Crushed it
+            return 1
+
+
+        full_year_df['Score'] = full_year_df.apply(get_score, axis=1)
+        full_year_df['Week'] = pd.to_datetime(full_year_df['Date']).dt.isocalendar().week
+        full_year_df['DayOfWeek'] = pd.to_datetime(full_year_df['Date']).dt.dayofweek
+
+        # Pivot table for grid rendering (Days of week vs Weeks)
+        heatmap_pivot = full_year_df.pivot(index='DayOfWeek', columns='Week', values='Score').fillna(0)
+
+        st.subheader(f"Activity Grid — {datetime.date.today().year}")
+
+        # Render a clean styled bar/area view representing consistency score per day over time
+        chart_data = full_year_df.set_index('Date')['Score']
+        st.line_chart(chart_data)
+
+        st.markdown("---")
+        st.write("### Contribution Breakdown")
+        col_h1, col_h2, col_h3 = st.columns(3)
+        total_crushed = len(full_year_df[full_year_df['Score'] == 2])
+        total_missed = len(full_year_df[full_year_df['Score'] == 0])
+        col_h1.metric("Crushed Days", f"{total_crushed} Days")
+        col_h2.metric("Missed / Relapsed Days", f"{total_missed} Days")
+        col_h3.metric("Consistency Score", f"{int((total_crushed / max(1, total_crushed + total_missed)) * 100)}%")
 
 elif navigation_selection == "Weekly Report":
     st.title("Weekly Progress Report")
