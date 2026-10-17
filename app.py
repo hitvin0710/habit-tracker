@@ -43,7 +43,7 @@ model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
 
 
-# --- CALCULATE HABIT COINS (Clamped at a minimum of 0) ---
+# --- CALCULATE HABIT COINS (Clamped at minimum 0) ---
 def calculate_habit_coins(df, bonuses):
     coins = 0
     if not df.empty:
@@ -55,11 +55,7 @@ def calculate_habit_coins(df, bonuses):
             journal_note = str(row.get("Journal", ""))
             if journal_note.strip() and journal_note != "nan" and len(journal_note) > 2:
                 coins += 2
-
-    # Add +25 coins for each completed goal bonus claimed
     coins += len(bonuses.get("claimed_bonuses", [])) * 25
-
-    # Ensure coins never drop below 0
     return max(0, coins)
 
 
@@ -74,13 +70,13 @@ if not logs_df.empty and "Date" in logs_df.columns:
 # --- SIDEBAR: HABIT COINS WALLET ---
 st.sidebar.title("🪙 Habit Wallet")
 st.sidebar.metric("Habit Coins Balance", f"{total_coins} Coins")
-st.sidebar.caption(
-    "Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!** (Minimum: 0)")
+st.sidebar.caption("Earn: +5 Good Habit | Deduct: -3 Relapse | Earn: +2 Journal | 🎯 **+25 Target Completed!** (Min: 0)")
 
 # --- NAVIGATION TABS ---
-tab_track, tab_goals, tab_report, tab_journal = st.tabs([
+tab_track, tab_goals, tab_cues, tab_report, tab_journal = st.tabs([
     "🎯 Daily Tracking & Check-In",
     "⏳ Monthly Goals & Timers",
+    "🧠 ML Written Cue Analysis",
     "📊 ML Weekly Report",
     "📓 Journal Archive"
 ])
@@ -91,7 +87,7 @@ with tab_track:
     if already_logged_today:
         st.warning(
             "🔒 **Today's check-in is locked!** You have already submitted your data for today. "
-            "To prevent cheating or editing past logs ('lagging'), daily entries can only be submitted once per day."
+            "To prevent editing past logs ('lagging'), entries can only be submitted once per day."
         )
 
     col1, col2 = st.columns(2)
@@ -111,15 +107,24 @@ with tab_track:
 
     with col2:
         st.subheader("Daily Context (ML Inputs)")
-        cue = st.selectbox("Trigger Cue:", ["Morning Routine", "After Class", "After Dinner", "Random Time"],
-                           disabled=already_logged_today)
+        cue_category = st.selectbox("Trigger Category (Law 1):",
+                                    ["Morning Routine", "After Class", "After Dinner", "Random Time"],
+                                    disabled=already_logged_today)
         split = st.selectbox("Routine Split:", ["Push", "Pull", "Legs", "Rest"], disabled=already_logged_today)
         sleep = st.slider("Sleep Hours:", 4.0, 10.0, 7.0, 0.5, disabled=already_logged_today)
         energy = st.slider("Energy (1-10):", 1, 10, 7, disabled=already_logged_today)
         stress = st.slider("Stress (1-10):", 1, 10, 4, disabled=already_logged_today)
 
-    # Active Monthly Challenge Check-In
+    # --- NEW: Write down what led to the habit ---
     st.divider()
+    st.subheader("📝 What led to the habit today?")
+    written_cue = st.text_input(
+        "Describe what happened right before your habit or urge (e.g., 'felt bored after finishing lecture', 'drank coffee at 4pm'):",
+        placeholder="Write your specific trigger context...",
+        disabled=already_logged_today
+    )
+
+    # Active Monthly Challenge Check-In
     st.subheader("🎯 Active Monthly Challenge Daily Check-In")
     goal_checkins = {}
 
@@ -137,7 +142,7 @@ with tab_track:
                 goal_checkins[goal["goal_name"]] = 1 if "Pass" in passed_today else 0
 
     st.subheader("Daily Journal (+2 Coins)")
-    journal_text = st.text_area("How did today feel? Note triggers or wins:", placeholder="Write your thoughts...",
+    journal_text = st.text_area("Additional thoughts or reflections:", placeholder="Write your thoughts...",
                                 disabled=already_logged_today)
 
     if not already_logged_today:
@@ -159,7 +164,8 @@ with tab_track:
                 save_goals(goals_data)
 
             new_row = pd.DataFrame([{
-                "Cue": cue,
+                "Cue": cue_category,
+                "Written_Cue": written_cue,
                 "Routine_Split": split,
                 "Sleep_Hours": sleep,
                 "Energy": energy,
@@ -252,6 +258,41 @@ with tab_goals:
                     st.rerun()
             st.divider()
 
+with tab_cues:
+    st.title("🧠 Machine Learning Written Cue Analysis")
+    st.caption(
+        "Analyzing your written triggers and descriptions to find underlying patterns behind your successful habit completions vs. relapses.")
+
+    if logs_df.empty or "Written_Cue" not in logs_df.columns:
+        st.info(
+            "Log a few days of data with written trigger descriptions in Daily Tracking to unlock ML Written Cue Analysis!")
+    else:
+        st.subheader("Your Written Trigger Logs & Outcomes")
+        display_df = logs_df[["Date", "Written_Cue", "Completed", "Relapsed"]].copy()
+        display_df["Status"] = display_df.apply(
+            lambda r: "✅ Success" if r["Completed"] == 1 else ("❌ Relapsed" if r["Relapsed"] == 1 else "Neutral"),
+            axis=1)
+        st.dataframe(display_df[["Date", "Written_Cue", "Status"]], use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("🤖 Random Forest Feature Importance")
+        st.caption(
+            "Shows which contextual factors (Sleep, Stress, Energy, Trigger Category) carry the most predictive weight in your ML model.")
+
+        try:
+            rf_model = model.named_steps["rf"]
+            feature_names = model.named_steps["prep"].get_feature_names_out()
+            importances = rf_model.feature_importances_
+
+            feat_df = pd.DataFrame({
+                "Feature": feature_names,
+                "Importance": importances
+            }).sort_values(by="Importance", ascending=False)
+
+            st.bar_chart(feat_df.set_index("Feature"))
+        except Exception as e:
+            st.info("Complete a few more logs to generate the ML feature weights chart.")
+
 with tab_report:
     st.title("📊 ML Weekly Progress Report")
     if logs_df.empty or "Relapsed" not in logs_df.columns:
@@ -273,5 +314,6 @@ with tab_journal:
     else:
         for idx, row in logs_df.iterrows():
             with st.expander(f"Entry on {row.get('Date', 'Unknown Date')} — Relapsed: {row.get('Relapsed', 0)}"):
+                st.write(f"**Written Trigger Context:** {row.get('Written_Cue', 'None provided.')}")
                 st.write(f"**Journal Note:** {row.get('Journal', 'No notes provided.')}")
                 st.write(f"*Alternate Habit Used:* {row.get('Alternate_Habit', 'None')}")
