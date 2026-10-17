@@ -26,7 +26,6 @@ GOALS_FILE = "goals_config.json"
 BONUS_LOG_FILE = "bonus_coins_log.json"
 HABITS_CONFIG_FILE = "habits_config.json"
 WALLET_DATA_FILE = "wallet_data.json"
-WORKOUT_CSV = "workout_logs.csv"
 
 
 def load_json(filepath, default_data):
@@ -48,7 +47,6 @@ habits_config = load_json(HABITS_CONFIG_FILE, {
 goals_data = load_json(GOALS_FILE, {"monthly_goals": []})
 bonus_log = load_json(BONUS_LOG_FILE, {"claimed_bonuses": []})
 
-# Rewards menu starts completely empty now
 wallet_data = load_json(WALLET_DATA_FILE, {
     "spent_coins": 0,
     "focus_coins_earned": 0,
@@ -59,7 +57,6 @@ wallet_data = load_json(WALLET_DATA_FILE, {
 # Train ML model & load logs
 model = train_and_get_model()
 logs_df = pd.read_csv(USER_CSV) if os.path.exists(USER_CSV) else pd.DataFrame()
-workouts_df = pd.read_csv(WORKOUT_CSV) if os.path.exists(WORKOUT_CSV) else pd.DataFrame()
 
 
 # --- CALCULATE HABIT COINS ---
@@ -132,8 +129,6 @@ navigation_selection = st.sidebar.radio(
     "Select View",
     [
         "Daily Tracking",
-        "Workout Tracker",
-        "Focus Room",
         "Rewards Vault",
         "Monthly Goals",
         "Analytics & Reports",
@@ -171,7 +166,7 @@ if navigation_selection == "Daily Tracking":
 
     if already_logged_today:
         st.warning(
-            "Today's check-in is locked to prevent lagging past data. You can still use the Focus Room or Workout Tracker!")
+            "Today's check-in is locked to prevent lagging past data. You can still check your Analytics or Rewards Vault!")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -243,65 +238,6 @@ if navigation_selection == "Daily Tracking":
             new_row.to_csv(USER_CSV, mode="a", header=not os.path.exists(USER_CSV), index=False)
             st.success("Log saved successfully!")
             st.rerun()
-
-elif navigation_selection == "Workout Tracker":
-    st.title("Workout & Lifting Tracker")
-    st.caption("Log your resistance training progression.")
-
-    with st.form("workout_form"):
-        col_w1, col_w2, col_w3 = st.columns(3)
-        w_split = col_w1.selectbox("Split", ["Push", "Pull", "Legs"])
-        w_exercise = col_w2.text_input("Exercise Name (e.g., Incline Bench, Squat)")
-        w_weight = col_w3.number_input("Weight (kg or lbs)", min_value=0.0, step=2.5)
-
-        col_w4, col_w5 = st.columns(2)
-        w_sets = col_w4.number_input("Sets", min_value=1, max_value=10, value=3)
-        w_reps = col_w5.text_input("Reps (e.g., 10,8,8 or 12)")
-
-        if st.form_submit_button("Log Exercise"):
-            if w_exercise:
-                new_workout = pd.DataFrame([{
-                    "Date": today_str,
-                    "Split": w_split,
-                    "Exercise": w_exercise,
-                    "Weight": w_weight,
-                    "Sets": w_sets,
-                    "Reps": w_reps
-                }])
-                new_workout.to_csv(WORKOUT_CSV, mode="a", header=not os.path.exists(WORKOUT_CSV), index=False)
-                st.success(f"Logged {w_sets} sets of {w_exercise}!")
-                st.rerun()
-
-    st.divider()
-    st.subheader("Recent Workout History")
-    if not workouts_df.empty:
-        st.dataframe(workouts_df.tail(15).sort_index(ascending=False), use_container_width=True, hide_index=True)
-    else:
-        st.info("No exercises logged yet.")
-
-elif navigation_selection == "Focus Room":
-    st.title("Deep Focus Room")
-    st.caption("Lock in to an alternate habit. Complete the timer without leaving the app to earn bonus coins.")
-
-    focus_task = st.selectbox("What are you focusing on?",
-                              ["CFOP Rubik's Cube Algorithms", "Yamaha Keyboard Practice", "LeetCode Session",
-                               "Custom Work"])
-    focus_minutes = st.slider("Focus Duration (Minutes)", min_value=5, max_value=60, value=15, step=5)
-
-    if st.button("Start Focus Session"):
-        timer_placeholder = st.empty()
-        total_seconds = focus_minutes * 60
-
-        for i in range(total_seconds, -1, -1):
-            mins, secs = divmod(i, 60)
-            timer_placeholder.markdown(
-                f"<h1 style='text-align: center; font-size: 80px; color: #00ffcc;'>{mins:02d}:{secs:02d}</h1>",
-                unsafe_allow_html=True)
-            time.sleep(1)
-
-        wallet_data["focus_coins_earned"] += 5
-        save_json(WALLET_DATA_FILE, wallet_data)
-        st.success(f"Session Complete! +5 🪙 earned for focusing on {focus_task}.")
 
 elif navigation_selection == "Rewards Vault":
     st.title("Rewards Vault (Cheat Days)")
