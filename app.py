@@ -47,15 +47,12 @@ habits_config = load_json(HABITS_CONFIG_FILE, {
 })
 goals_data = load_json(GOALS_FILE, {"monthly_goals": []})
 bonus_log = load_json(BONUS_LOG_FILE, {"claimed_bonuses": []})
+
+# Rewards menu starts completely empty now
 wallet_data = load_json(WALLET_DATA_FILE, {
     "spent_coins": 0,
     "focus_coins_earned": 0,
-    "rewards_menu": {
-        "Order outside food": 150,
-        "Watch a movie": 250,
-        "Minecraft Creative session": 100,
-        "Listen to Frank Ocean / Baby Keem album uninterrupted": 50
-    },
+    "rewards_menu": {},
     "redemption_history": []
 })
 
@@ -139,9 +136,7 @@ navigation_selection = st.sidebar.radio(
         "Focus Room",
         "Rewards Vault",
         "Monthly Goals",
-        "Consistency Heatmap",
-        "Written Cue Analysis",
-        "Weekly Report",
+        "Analytics & Reports",
         "Journal Archive"
     ]
 )
@@ -326,8 +321,11 @@ elif navigation_selection == "Rewards Vault":
     st.divider()
     st.subheader("Available Rewards")
 
+    if not wallet_data["rewards_menu"]:
+        st.info("Your vault is empty. Add a custom reward above to start spending your coins!")
+
     for reward_name, cost in list(wallet_data["rewards_menu"].items()):
-        col_m1, col_m2, col_m3 = st.columns([3, 1, 1])
+        col_m1, col_m2, col_m3, col_m4 = st.columns([3, 1, 1, 1])
         col_m1.markdown(f"**{reward_name}**")
         col_m2.markdown(f"`{cost} 🪙`")
 
@@ -344,6 +342,11 @@ elif navigation_selection == "Rewards Vault":
                 st.rerun()
         else:
             col_m3.button("Not Enough 🪙", key=f"lock_{reward_name}", disabled=True)
+
+        if col_m4.button("Delete", key=f"del_rew_{reward_name}"):
+            del wallet_data["rewards_menu"][reward_name]
+            save_json(WALLET_DATA_FILE, wallet_data)
+            st.rerun()
 
     if wallet_data.get("redemption_history"):
         with st.expander("Redemption History"):
@@ -397,22 +400,25 @@ elif navigation_selection == "Monthly Goals":
                 st.rerun()
         st.divider()
 
-elif navigation_selection == "Written Cue Analysis":
-    st.title("Written Cue & Health Factor Analysis")
-    if logs_df.empty or "Written_Cue" not in logs_df.columns:
-        st.info("Log a few days of data to unlock analysis!")
-    else:
-        st.subheader("Feature Importance Analysis")
-        try:
-            rf_model = model.named_steps["rf"]
-            feat_names = model.named_steps["prep"].get_feature_names_out()
-            st.bar_chart(
-                pd.DataFrame({"Feature": feat_names, "Importance": rf_model.feature_importances_}).set_index("Feature"))
-        except Exception:
-            st.info("Complete more logs to generate feature weights.")
+elif navigation_selection == "Analytics & Reports":
+    st.title("Analytics, Heatmap & Reports")
 
-elif navigation_selection == "Consistency Heatmap":
-    st.title("GitHub-Style Consistency Heatmap")
+    st.subheader("Weekly Progress Report")
+    if logs_df.empty or "Relapsed" not in logs_df.columns:
+        st.info("Log a few days of data in Daily Tracking to generate your weekly report!")
+    else:
+        last_7_days = logs_df.tail(7)
+        total_relapses = last_7_days["Relapsed"].sum()
+        completion_rate = last_7_days["Completed"].mean() * 100
+
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Weekly Relapses", f"{total_relapses} Times")
+        r2.metric("Completion Rate", f"{completion_rate:.1f}%")
+        r3.metric("Total Days Logged", f"{len(logs_df)} Days")
+
+    st.divider()
+
+    st.subheader("Consistency Heatmap")
     if logs_df.empty or "Date" not in logs_df.columns:
         st.info("Log some data to populate your heatmap!")
     else:
@@ -425,19 +431,19 @@ elif navigation_selection == "Consistency Heatmap":
             0 if pd.isna(r.get('Completed')) or r.get('Relapsed', 0) == 1 else 1), axis=1)
         st.line_chart(full_year_df.set_index('Date')['Score'])
 
-elif navigation_selection == "Weekly Report":
-    st.title("Weekly Progress Report")
-    if logs_df.empty or "Relapsed" not in logs_df.columns:
-        st.info("Log a few days of data in Daily Tracking to generate your weekly report!")
-    else:
-        last_7_days = logs_df.tail(7)
-        total_relapses = last_7_days["Relapsed"].sum()
-        completion_rate = last_7_days["Completed"].mean() * 100
+    st.divider()
 
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Weekly Relapses", f"{total_relapses} Times")
-        r2.metric("Completion Rate", f"{completion_rate:.1f}%")
-        r3.metric("Total Days Logged", f"{len(logs_df)} Days")
+    st.subheader("Written Cue Analysis")
+    if logs_df.empty or "Written_Cue" not in logs_df.columns:
+        st.info("Log a few days of data to unlock analysis!")
+    else:
+        try:
+            rf_model = model.named_steps["rf"]
+            feat_names = model.named_steps["prep"].get_feature_names_out()
+            st.bar_chart(
+                pd.DataFrame({"Feature": feat_names, "Importance": rf_model.feature_importances_}).set_index("Feature"))
+        except Exception:
+            st.info("Complete more logs to generate feature weights.")
 
 elif navigation_selection == "Journal Archive":
     st.title("Journal Archive")
